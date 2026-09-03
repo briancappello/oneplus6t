@@ -68,6 +68,7 @@ stops in fastboot, then finishes there without you touching it.
 | `FAST=1` | skip read-back verification |
 | `START=n` | resume the flash after an interruption |
 | `FORCE_GPT=1` | rewrite the GPT even if it is already consistent |
+| `LAYOUT=dualboot` | split `userdata` 50/50 and add a `linuxroot` partition |
 
 Sequence: measure LUN0 → finish the GPT template → write and verify primary +
 backup → flash 23 partitions across LUN0/1/2/4 → verify each by chunked
@@ -127,32 +128,63 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 | Restore stock OxygenOS 11 from EDL | done |
 | Flash postmarketOS | `flash-pmos.sh`, works, not yet integrated |
 | Flash LineageOS | not started |
-| Dual-boot Android + a self-built Linux | design open |
+| Dual-boot Android + a self-built Linux | GPT layout done, boot side not started |
 
-The dual-boot goal has one hard constraint worth stating up front, because it
-shapes everything else.
+## Dual-boot layout
 
-This device is A/B. Almost everything is duplicated — `boot`, `system`,
-`vendor`, `odm`, `modem`, `xbl`, `abl`, `tz` all exist as `_a` and `_b`, and
-`fastboot set_active` picks between them. That part is free.
+This device is A/B: `boot`, `system`, `vendor`, `odm`, `modem`, `xbl`, `abl`,
+`tz`, `dtbo` and `vbmeta` all exist as `_a` and `_b`, and `fastboot set_active`
+picks between them. Two operating systems, one command.
 
-`userdata` is **not** duplicated. It is a single 246 GB partition shared by
-whatever boots. And postmarketOS on fajita installs its rootfs *into*
-`userdata` (see `flash-pmos.sh`), so as things stand a pmOS install and an
-Android `/data` cannot coexist — each destroys the other.
+`userdata` is **not** slotted — one partition, shared by whatever boots. So
+`LAYOUT=dualboot` splits it in half and adds a `linuxroot` partition:
 
-So a real dual-boot needs one of:
+```
+ stock                                  dualboot
+ ─────────────────────────────────      ─────────────────────────────────
+  1601344 ─ 61677562                     1601344 ─ 31641599
+    userdata          229.17 GiB           userdata        114.59 GiB
+                                          31641600 ─ 61677562
+                                            linuxroot      114.58 GiB
+```
 
-1. **Linux in `system_b`** — 2.86 GB, no repartitioning, but that is a hard
-   ceiling and the pmOS rootfs images are already 2.1–3.1 GB.
-2. **Repartition `userdata`** into an Android `/data` plus a Linux root. This
-   repo can already rebuild the LUN0 GPT from scratch and verify it, so the
-   mechanism exists — but it means every OS switch is a wipe-level operation
-   and stock OTAs would need care.
-3. **File-backed rootfs on shared `/data`** — no repartitioning, but Android
-   has to be the one that owns and mounts it.
+`userdata` keeps its **start** sector, so no other partition moves — the split
+is one edited GPT entry, one added entry, and two recomputed CRC32s. The
+boundary is aligned to 16 MiB, which leaves the two halves 16.8 MiB apart out
+of 114 GiB.
 
-None of these is obviously right yet.
+**Android needs no changes.** It mounts `/data` by name, so it simply finds a
+smaller partition. Nothing in any fstab mentions `linuxroot`, so Android never
+mounts, checks or formats it — including on a factory reset, which wipes
+`userdata` by name.
+
+**postmarketOS needs no changes either.** Its initramfs finds the rootfs by
+filesystem UUID, not by partition name — the boot image's cmdline carries
+`pmos_root_uuid=...`, and `find_root_partition()` in `init_functions.sh`
+resolves it with `blkid --uuid`, falling back to the label `pmOS_root`. It
+scans every block device, so writing a stock pmOS rootfs to `linuxroot`
+instead of `userdata` just works.
+
+```
+fastboot set_active a   → boot_a + system_a + vendor_a   → Android
+fastboot set_active b   → boot_b + linuxroot             → Linux
+```
+
+`system_b` and `odm_b` (3 GiB) go unused, and are available for a second
+Android later.
+
+### Known hazards
+
+- **Repartitioning wipes `/data`.** There is no in-place shrink here.
+- **`LAYOUT=dualboot` is not the default.** Running the restore without it
+  rebuilds the stock table and destroys `linuxroot`.
+- **A/B OTAs write the inactive slot.** A stock OxygenOS update installed
+  while on slot A will overwrite `boot_b` — the Linux kernel, though not the
+  rootfs. Expect to re-flash the kernel after an Android update.
+- **AVB.** A custom `boot_b` will not verify against stock `vbmeta`. It needs
+  `fastboot --disable-verity --disable-verification flash vbmeta_b`.
+- **No shared storage.** Android's `/data` is `fileencryption=ice`, so Linux
+  cannot read it. A shared area would have to be a third partition.
 
 ## Device this was built against
 

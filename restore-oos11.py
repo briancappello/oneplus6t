@@ -38,6 +38,7 @@ import struct
 import subprocess
 import sys
 import time
+import uuid
 import zlib
 
 # --------------------------------------------------------------------------
@@ -55,6 +56,17 @@ SEC = 4096
 FIRST_USABLE = 6          # entry array occupies LBA2..5
 GROW = "userdata"         # settings.xml: GrowLastPartToFillDisk="true"
                           # provision_samsung.xml: LUNtoGrow="0"
+
+# LAYOUT=dualboot splits the userdata region 50/50 and adds a partition for a
+# second OS. Android mounts /data by name, so it just sees a smaller /data and
+# needs no modification; nothing in any fstab references linuxroot, so Android
+# never touches it. postmarketOS locates its rootfs with `blkid --uuid` (see
+# init_functions.sh: find_root_partition -> find_partition), not by partition
+# name, so a stock pmOS image works here unmodified.
+LINUX_PART = "linuxroot"
+SPLIT_ALIGN = 4096        # 16 MiB; the UFS erase block is 8 KiB
+# Fixed so that rebuilding the same layout twice produces the same table.
+LINUX_UUID = "5f8c6d21-3b47-4a19-9e02-7c1d4a6b8e33"
 
 # /data must be ext4. vendor.img's fstab.qcom says:
 #   .../userdata /data ext4 ... wait,check,fileencryption=ice,quota
@@ -114,12 +126,15 @@ def parse_entries(buf, nent, esz):
     return out
 
 
-def build_gpt(total, template=GPT_TEMPLATE, verbose=True):
+def build_gpt(total, template=GPT_TEMPLATE, verbose=True, dualboot=False):
     """Finish the MSM template for a LUN of `total` sectors.
 
     Returns (primary 6 sectors, backup 5 sectors). Aborts if the CRC routines
     cannot reproduce the template's own stored CRCs, which would mean the
     header layout assumption is wrong.
+
+    dualboot=True splits the userdata region in half and appends a linuxroot
+    partition. userdata keeps its start sector, so no other partition moves.
     """
     src = open(template, "rb").read()
     if len(src) != 6 * SEC:
@@ -150,7 +165,34 @@ def build_gpt(total, template=GPT_TEMPLATE, verbose=True):
     if last_usable <= start:
         raise SystemExit(f"ABORT: computed last_usable {last_usable} <= "
                          f"{GROW} start {start}; LUN size looks wrong")
-    struct.pack_into("<Q", ents, idx * esz + 40, last_usable)
+
+    if dualboot:
+        region = last_usable - start + 1
+        lr_start = -(-(start + region // 2) // SPLIT_ALIGN) * SPLIT_ALIGN
+        if not start < lr_start <= last_usable:
+            raise SystemExit("ABORT: cannot place linuxroot inside "
+                             f"{start}..{last_usable}")
+        struct.pack_into("<Q", ents, idx * esz + 40, lr_start - 1)
+
+        free = next((i for i in range(hdr["nent"])
+                     if ents[i * esz:i * esz + 16] == b"\0" * 16), None)
+        if free is None:
+            raise SystemExit("ABORT: no free GPT entry for linuxroot")
+        e = free * esz
+        # Reuse userdata's partition type GUID; only the unique GUID, the LBAs
+        # and the name differ.
+        ents[e:e + 16] = ents[idx * esz:idx * esz + 16]
+        ents[e + 16:e + 32] = uuid.UUID(LINUX_UUID).bytes_le
+        struct.pack_into("<QQQ", ents, e + 32, lr_start, last_usable, 0)
+        name = LINUX_PART.encode("utf-16-le")
+        ents[e + 56:e + 128] = name.ljust(72, b"\0")
+        if verbose:
+            print(f"  {GROW}:    {start}..{lr_start - 1}"
+                  f"  ({(lr_start - start) * SEC / 1024 ** 3:.2f} GiB)")
+            print(f"  {LINUX_PART}:   {lr_start}..{last_usable}"
+                  f"  ({(last_usable - lr_start + 1) * SEC / 1024 ** 3:.2f} GiB)")
+    else:
+        struct.pack_into("<Q", ents, idx * esz + 40, last_usable)
 
     pri = dict(hdr, cur=1, bak=total - 1, first=FIRST_USABLE,
                last=last_usable, plba=2)
@@ -164,10 +206,17 @@ def build_gpt(total, template=GPT_TEMPLATE, verbose=True):
     primary = bytes(mbr) + pack_header(pri).ljust(SEC, b"\0") + bytes(ents)
     backup = bytes(ents) + pack_header(bak).ljust(SEC, b"\0")
 
-    if verbose:
+    if verbose and not dualboot:
         print(f"  {GROW}: grown to {last_usable}"
-              f" ({(last_usable - start + 1) * SEC / 1e9:.1f} GB)")
+              f" ({(last_usable - start + 1) * SEC / 1024 ** 3:.2f} GiB)")
     return primary, backup
+
+
+def layout_of(primary):
+    """Return {name: (start, end)} for a built or read-back primary GPT."""
+    h = unpack_header(primary[SEC:SEC * 2])
+    return {n: (s, e) for n, s, e in
+            parse_entries(primary[SEC * 2:], h["nent"], h["esz"])}
 
 
 def selftest():
@@ -207,6 +256,39 @@ def selftest():
         raise AssertionError("build_gpt accepted an impossible LUN size")
 
     print(f"  {len(parts)} partitions, no overlaps, all CRCs verify")
+
+    print("\n  -- dualboot layout --")
+    dpri, dbak = build_gpt(total, dualboot=True)
+    dh = unpack_header(dpri[SEC:SEC * 2])
+    assert header_crc(dh) == dh["hcrc"], "dualboot header CRC wrong"
+    assert entries_crc(dpri[SEC * 2:], dh["nent"], dh["esz"]) == dh["ecrc"]
+    db = unpack_header(dbak[SEC * 4:])
+    assert header_crc(db) == db["hcrc"] and db["ecrc"] == dh["ecrc"]
+
+    d = layout_of(dpri)
+    assert LINUX_PART in d, "linuxroot missing"
+    ud_s, ud_e = d[GROW]
+    lr_s, lr_e = d[LINUX_PART]
+    assert ud_s == parts[GROW][0], "userdata start moved"
+    assert lr_s == ud_e + 1, "gap or overlap between userdata and linuxroot"
+    assert lr_e == dh["last"], "linuxroot does not reach last_usable"
+    assert lr_s % SPLIT_ALIGN == 0, "linuxroot start not aligned"
+    # every other partition must be byte-identical to the stock layout
+    for name, ext in parts.items():
+        if name != GROW:
+            assert d[name] == ext, f"{name} moved in the dualboot layout"
+    # the two halves must account for the whole region, within one alignment
+    region = parts[GROW][1] - parts[GROW][0] + 1
+    ud_n, lr_n = ud_e - ud_s + 1, lr_e - lr_s + 1
+    assert ud_n + lr_n == region, "split does not account for the region"
+    # Rounding the boundary up to SPLIT_ALIGN moves it by up to ALIGN-1, which
+    # adds to one half and takes from the other, so the worst-case imbalance is
+    # 2*ALIGN-1 sectors (~34 MB) plus 1 for an odd-sized region.
+    assert abs(ud_n - lr_n) <= 2 * SPLIT_ALIGN, "split is not ~50/50"
+    ordered = sorted(d.values())
+    for (s1, e1), (s2, _) in zip(ordered, ordered[1:]):
+        assert e1 < s2, f"partitions overlap at {e1}/{s2}"
+    print(f"  {len(d)} partitions, 50/50 split, nothing else moved")
     print("selftest PASSED")
 
 
@@ -331,12 +413,24 @@ def phase_edl():
     print(f"  LUN0 = {total} sectors ({total * SEC / 1e9:.2f} GB)")
 
     print("\n[2/5] partition table")
-    valid = existing is not None and existing["last"] == total - FIRST_USABLE
+    dualboot = os.environ.get("LAYOUT") == "dualboot"
+    print(f"  layout: {'dualboot (userdata split 50/50)' if dualboot else 'stock'}")
+
+    # "Consistent" means consistent with the layout being asked for, not just
+    # any valid table -- otherwise switching layouts would silently no-op.
+    valid = False
+    if existing is not None and existing["last"] == total - FIRST_USABLE:
+        head = rd(fire, 0, 0, 6)
+        if head:
+            on_disk = layout_of(head)
+            valid = (LINUX_PART in on_disk) == dualboot
     if valid and os.environ.get("FORCE_GPT") != "1":
-        print("  device already has a consistent GPT; keeping it "
+        print("  device already matches this layout; keeping it "
               "(FORCE_GPT=1 to rewrite)")
     else:
-        pri, bak = build_gpt(total)
+        if dualboot and not dry:
+            print("  WARNING: repartitioning destroys everything in /data.")
+        pri, bak = build_gpt(total, dualboot=dualboot)
         if dry:
             print("  DRY: would write primary @0 and backup "
                   f"@{total - 5}")
