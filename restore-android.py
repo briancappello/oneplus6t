@@ -383,19 +383,33 @@ def sha_image(path, sectors):
     return h.hexdigest()
 
 
-def set_bcb_fastboot(fire, opts):
-    """Ask the bootloader to stop in fastboot on the next boot.
+def set_bcb(fire, opts, command, recovery=()):
+    """Write Android's bootloader control block into misc.
 
-    bootloader_message.command lives at offset 0 of misc. Also clears any
-    stale command that would otherwise divert the boot.
+        struct bootloader_message {
+            char command[32];    // offset 0
+            char status[32];     // offset 32
+            char recovery[768];  // offset 64
+            ...
+        };
+
+    command="boot-recovery" with recovery=["--wipe_data"] is how a factory
+    reset is normally requested: recovery boots, formats /data using the OS's
+    own idea of the filesystem, and reboots. That is more reliable than our
+    `fastboot format`, and unlike it, it does not depend on the phone stopping
+    in fastboot at all.
+
+    Writing the whole sector also clears any stale command left behind.
     """
     res = fire.detect_partition(opts, "misc")
     if not res[0]:
         return False
     lun, p = res[1], res[2]
     bcb = bytearray(SEC)
-    cmd = b"bootonce-bootloader"
-    bcb[0:len(cmd)] = cmd
+    bcb[0:len(command)] = command.encode()
+    if recovery:
+        blob = "\n".join(["recovery", *recovery]) + "\n"
+        bcb[64:64 + len(blob)] = blob.encode()
     path = f"{WORK}/bcb.bin"
     open(path, "wb").write(bytes(bcb))
     return fire.cmd_program(lun, p.sector, path, display=False)
@@ -494,17 +508,26 @@ def phase_edl():
             got = sha_readback(fire, lun, sec, need)
             want = sha_image(path, need)
             ok = got == want
-            print(f"  {name:<14} {'ok' if ok else 'MISMATCH'}")
+            print(f"  {name:<14} {'ok' if ok else 'MISMATCH'}", flush=True)
             if not ok:
                 bad.append(name)
         if bad:
             raise SystemExit(f"ABORT: verification failed: {', '.join(bad)}")
         print("  every partition matches its image")
 
-    print("\nrequesting fastboot on next boot, then resetting")
-    if not set_bcb_fastboot(fire, opts):
-        print("  (could not set the boot control block; if the phone does not"
-              " stop in fastboot, enter it manually)")
+    # /data still holds the previous OS's filesystem and encryption keys, so
+    # it must be reformatted. Ask recovery to do it: it is the only method
+    # that works without the phone stopping in fastboot, and it uses the
+    # freshly flashed OS's own notion of the filesystem.
+    if os.environ.get("WIPE") == "0":
+        print("\nWIPE=0: leaving /data alone, requesting fastboot")
+        ok = set_bcb(fire, opts, "bootonce-bootloader")
+    else:
+        print("\nrequesting a recovery data wipe on next boot, then resetting")
+        ok = set_bcb(fire, opts, "boot-recovery", ["--wipe_data"])
+    if not ok:
+        print("  WARNING: could not write the boot control block. If the phone"
+              " lands in recovery, choose 'Erase everything' by hand.")
     fire.cmd_reset()
     api.deinit()
 
@@ -535,6 +558,22 @@ def data_fs():
     print(f"  WARNING: no /data line found in vendor.img; "
           f"assuming {DATA_FS_FALLBACK}")
     return DATA_FS_FALLBACK
+
+
+def phase_wipe():
+    """Request a recovery data wipe and reboot. Nothing else is touched.
+
+    Useful on its own, and it is the cheap way to test the boot control block
+    without repeating a full flash.
+    """
+    print("\n=== wipe phase ===")
+    api = connect()
+    fire = api.edl.fh.firehose
+    ok = set_bcb(fire, api.edl.args, "boot-recovery", ["--wipe_data"])
+    print("  boot control block:", "written" if ok else "FAILED")
+    fire.cmd_reset()
+    api.deinit()
+    print("  reset issued; recovery should wipe /data and boot the OS")
 
 
 def fb(*args, timeout=900):
@@ -600,6 +639,10 @@ def main():
         phase_edl()
     elif phase == "fb":
         phase_fastboot()
+    elif phase == "wipe":
+        if not in_edl():
+            raise SystemExit("PHASE=wipe needs the phone in EDL (05c6:9008)")
+        phase_wipe()
     else:
         if not in_edl():
             raise SystemExit(
@@ -608,9 +651,20 @@ def main():
                 "together and plug in USB. The screen stays black.\n"
                 "(Already past the EDL stage? Use PHASE=fb.)")
         phase_edl()
-        if os.environ.get("DRY") != "1":
-            time.sleep(10)
-            phase_fastboot()
+        if os.environ.get("DRY") == "1":
+            return
+        # Two possible landings: recovery does the wipe and boots the OS (the
+        # normal path), or the bootloader stops in fastboot because a slot is
+        # flagged unbootable. Only the second needs anything more from us.
+        print("\nwaiting to see where the phone lands...")
+        for _ in range(24):
+            time.sleep(5)
+            if fb("devices", timeout=10).stdout.strip():
+                print("  stopped in fastboot; finishing there")
+                phase_fastboot()
+                return
+        print("  no fastboot device, so recovery is handling the wipe.")
+        print("  First boot after a wipe takes several minutes; leave it alone.")
 
 
 if __name__ == "__main__":

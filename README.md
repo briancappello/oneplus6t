@@ -74,6 +74,8 @@ stops in fastboot, then finishes there without you touching it.
 | `SELFTEST=1` | offline: build and check the GPT, touch no hardware |
 | `DRY=1` | resolve and size-check every partition, write nothing |
 | `PHASE=edl` / `PHASE=fb` | run a single stage |
+| `PHASE=wipe` | only request a recovery `/data` wipe and reboot |
+| `WIPE=0` | keep `/data`; ask the bootloader for fastboot instead |
 | `FAST=1` | skip read-back verification |
 | `START=n` | resume the flash after an interruption |
 | `FORCE_GPT=1` | rewrite the GPT even if it is already consistent |
@@ -86,9 +88,27 @@ the type from the `/data` line. It is never assumed, because assuming it is
 exactly what bootloops the device (see below). Both OOS9 and OOS11 say `ext4`.
 
 Sequence: measure LUN0 → finish the GPT template → write and verify primary +
-backup → flash 23 partitions across LUN0/1/2/4 → verify each by chunked
-read-back SHA256 → clear `misc` → `set_active a` → `format:ext4 userdata` →
-reboot.
+backup → flash 46 partitions across LUN0/1/2/4 → verify each by chunked
+read-back SHA256 → write the boot control block → reset.
+
+`/data` carries the previous OS's filesystem and encryption keys, so it has to
+be reformatted. The script asks **recovery** to do it, by writing Android's
+bootloader control block into `misc`:
+
+```
+command  @0   = "boot-recovery"
+recovery @64  = "recovery\n--wipe_data\n"
+```
+
+That is the mechanism a normal factory reset uses. Recovery formats `/data`
+with the freshly flashed OS's own idea of the filesystem and reboots — which
+is both more correct than `fastboot format` and, unlike it, does not depend on
+the phone ever stopping in fastboot.
+
+The fastboot stage is now a fallback, not a requirement: it runs only if the
+bootloader happens to stop there, which occurs when a slot is flagged
+`unbootable`. On the OxygenOS 11 install that is exactly what happened, and it
+was luck rather than design.
 
 ## Why this repo exists
 
