@@ -1,7 +1,15 @@
-# OnePlus 6T (fajita) — restore to stock OxygenOS 11 from EDL
+# oneplus6t — flashing and recovery scripts for the OnePlus 6T (fajita)
 
-Recovers a OnePlus 6T from a destroyed partition table back to stock
-OxygenOS 11.1.2.2 (34.J.62), entirely from Linux, entirely from EDL.
+Working toward a set of scripts that can put any of several operating systems
+on a OnePlus 6T, with a known-good Android always recoverable underneath.
+
+**Today this repo does one thing:** restore a device from a destroyed
+partition table back to stock OxygenOS 11.1.2.2 (34.J.62), entirely from
+Linux, entirely from EDL. That is the floor everything else stands on — if an
+experiment bricks the phone, this brings it back.
+
+Planned, not built: postmarketOS, LineageOS, and dual-booting a stock Android
+against a self-built Linux. See [Roadmap](#roadmap).
 
 ```bash
 git clone <this repo> oneplus6t-restore
@@ -111,6 +119,40 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
   be bounded below 2³² or it runs away to 2⁶⁴.
 - **This loader has no `getsha256digest`.** It advertises `sha256init` and
   `sha256final` only, so verification is done by chunked read-back.
+
+## Roadmap
+
+| | Status |
+|---|---|
+| Restore stock OxygenOS 11 from EDL | done |
+| Flash postmarketOS | `flash-pmos.sh`, works, not yet integrated |
+| Flash LineageOS | not started |
+| Dual-boot Android + a self-built Linux | design open |
+
+The dual-boot goal has one hard constraint worth stating up front, because it
+shapes everything else.
+
+This device is A/B. Almost everything is duplicated — `boot`, `system`,
+`vendor`, `odm`, `modem`, `xbl`, `abl`, `tz` all exist as `_a` and `_b`, and
+`fastboot set_active` picks between them. That part is free.
+
+`userdata` is **not** duplicated. It is a single 246 GB partition shared by
+whatever boots. And postmarketOS on fajita installs its rootfs *into*
+`userdata` (see `flash-pmos.sh`), so as things stand a pmOS install and an
+Android `/data` cannot coexist — each destroys the other.
+
+So a real dual-boot needs one of:
+
+1. **Linux in `system_b`** — 2.86 GB, no repartitioning, but that is a hard
+   ceiling and the pmOS rootfs images are already 2.1–3.1 GB.
+2. **Repartition `userdata`** into an Android `/data` plus a Linux root. This
+   repo can already rebuild the LUN0 GPT from scratch and verify it, so the
+   mechanism exists — but it means every OS switch is a wipe-level operation
+   and stock OTAs would need care.
+3. **File-backed rootfs on shared `/data`** — no repartitioning, but Android
+   has to be the one that owns and mounts it.
+
+None of these is obviously right yet.
 
 ## Device this was built against
 
