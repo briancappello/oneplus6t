@@ -1,0 +1,17 @@
+# Everything bootstrap.py fetches or produces. Nothing here belongs in git:
+# the archives are ~6 GB and the extracted images are another ~5 GB.
+downloads/
+edl/
+oppo_decrypt/
+.venv/
+.work/
+msm/
+stock-oxygenos-11/
+
+# Unrelated postmarketOS images that happen to live in this directory
+*postmarketOS*.img
+*postmarketOS*.img.xz
+
+# Local scratch
+*.pyc
+__pycache__/
