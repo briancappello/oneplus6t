@@ -6,7 +6,7 @@ oppo_decrypt/
 .venv/
 .work/
 msm/
-stock-oxygenos-11/
+releases/
 
 # Unrelated postmarketOS images that happen to live in this directory
 *postmarketOS*.img

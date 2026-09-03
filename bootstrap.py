@@ -36,27 +36,33 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DOWNLOADS = HERE / "downloads"
 MSM_DIR = HERE / "msm"
-OTA_DIR = HERE / "stock-oxygenos-11"
+RELEASES_DIR = HERE / "releases"
 VENV = HERE / ".venv"
 VPY = VENV / "bin" / "python"
 
 FORCE = os.environ.get("FORCE") == "1"
 
-SOURCES = [
-    {
-        "what": "MSM Download Tool (OOS 9.0.13) - firehose loader + GPT template",
-        "file": "6T_MsmDownloadTool_v4.0.59_OOS_v9.0.13.rar",
-        "sha256": "fa02df3c3e215aeb56ba8b1d812c510500f516d4a8ce46709c133feb53fee8bf",
-        "url": "https://ava4.androidfilehost.com/dl/8U_wSACJeGqngl4k5jtRjg/"
-               "1788540406/1395089523397966003/"
-               "6T_MsmDownloadTool_v4.0.59_OOS_v9.0.13.rar",
-        # AndroidFileHost hands out signed, expiring mirror URLs.
-        "note": "AndroidFileHost links expire. If this 403s or returns HTML, "
-                "grab the file manually from androidfilehost.com and drop it "
-                "in downloads/ , then re-run.",
-    },
-    {
-        "what": "OxygenOS 11.1.2.2 full OTA (34.J.62)",
+# The MSM package is not an OS to flash; it is where the firehose loader and
+# the LUN0 GPT template come from. Needed regardless of which OS you install.
+MSM_SOURCE = {
+    "what": "MSM Download Tool (OOS 9.0.13) - firehose loader + GPT template",
+    "file": "6T_MsmDownloadTool_v4.0.59_OOS_v9.0.13.rar",
+    "sha256": "fa02df3c3e215aeb56ba8b1d812c510500f516d4a8ce46709c133feb53fee8bf",
+    "url": "https://ava4.androidfilehost.com/dl/8U_wSACJeGqngl4k5jtRjg/"
+           "1788540406/1395089523397966003/"
+           "6T_MsmDownloadTool_v4.0.59_OOS_v9.0.13.rar",
+    # AndroidFileHost hands out signed, expiring mirror URLs.
+    "note": "AndroidFileHost links expire. If this 403s or returns HTML, grab "
+            "the file manually from androidfilehost.com and drop it in "
+            "downloads/ , then re-run.",
+}
+
+# Flashable OS releases. Each is a full A/B OTA zip containing a payload.bin.
+# url=None means the file cannot be fetched automatically and must be placed
+# in downloads/ by hand; the SHA256 is still checked.
+RELEASES = {
+    "oos11": {
+        "what": "OxygenOS 11.1.2.2 (34.J.62), Android 11",
         "file": "OnePlus6TOxygen_34.J.62_OTA_0620_all_2111252336_"
                 "339a2fa8335f21.zip",
         "sha256": "1c4abfa8901791cfa6d29a9e240e57fb1b5105da2bcaaa4fb8addc0a5e3a5831",
@@ -66,7 +72,19 @@ SOURCES = [
                "339a2fa8335f21.zip",
         "note": "",
     },
-]
+    "oos9": {
+        "what": "OxygenOS 9 (34.O.24), Android 9 PKQ1.180716.001",
+        "file": "OnePlus6TOxygen_34_OTA_024_all_1909112343_d5b1905.zip",
+        "sha256": "c371b5c1701767cdde62bf194a5c6f4b19b5bcec27266e9bda2993cd6f63d15b",
+        "url": None,
+        "note": "No download URL recorded for this build. Place the zip in "
+                "downloads/ manually; the SHA256 above is still verified.",
+    },
+}
+
+
+def sources():
+    return [MSM_SOURCE] + list(RELEASES.values())
 
 REPOS = [
     {"dir": "edl", "url": "https://github.com/bkerler/edl.git",
@@ -124,15 +142,14 @@ def step_tools():
 def step_download():
     say("2/6 source archives")
     DOWNLOADS.mkdir(exist_ok=True)
-    for src in SOURCES:
+    for src in sources():
         dest = DOWNLOADS / src["file"]
         # Reuse a copy already sitting in the working tree.
         if not dest.exists():
-            for old in (MSM_DIR / src["file"], OTA_DIR / src["file"]):
-                if old.exists():
-                    print(f"  found existing {old.relative_to(HERE)}, linking")
-                    os.link(old, dest)
-                    break
+            for old in HERE.glob(f"*/{src['file']}"):
+                print(f"  found existing {old.relative_to(HERE)}, linking")
+                os.link(old, dest)
+                break
         if dest.exists() and not FORCE:
             got = sha256(dest, src["file"][:28])
             if got == src["sha256"]:
@@ -145,6 +162,8 @@ def step_download():
             dest.unlink()
         if os.environ.get("SKIP_DOWNLOAD") == "1":
             raise SystemExit(f"ABORT: {src['file']} missing and SKIP_DOWNLOAD=1")
+        if not src.get("url"):
+            raise SystemExit(f"ABORT: {src['file']} is missing.\n  {src['note']}")
 
         print(f"  downloading {src['what']}")
         r = subprocess.run(["curl", "-fL", "--retry", "3", "-C", "-",
@@ -397,31 +416,38 @@ def extract_payload(payload, outdir, skip=frozenset()):
 
 
 def step_ota():
-    say("6/6 OTA payload -> partition images")
-    OTA_DIR.mkdir(exist_ok=True)
-    payload = OTA_DIR / "payload.bin"
-    if not payload.exists() or FORCE:
-        print("  unzipping payload.bin")
-        with zipfile.ZipFile(DOWNLOADS / SOURCES[1]["file"]) as z:
-            for member in ("payload.bin", "payload_properties.txt",
-                           "care_map.pb"):
-                if member in z.namelist():
-                    z.extract(member, OTA_DIR)
+    say("6/6 OTA payloads -> partition images")
 
-    # Don't extract what the restore never flashes; saves ~1.3 GB and time.
-    # The list lives in restore-oos11.py so the two cannot drift apart.
+    # Don't extract what the restore never flashes; saves ~1.3 GB per release.
+    # The list lives in restore-android.py so the two cannot drift apart.
     skip = frozenset()
     if os.environ.get("KEEP_ALL") != "1":
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "restore", HERE / "restore-oos11.py")
+            "restore", HERE / "restore-android.py")
         restore = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(restore)
         skip = frozenset(restore.SKIP)
 
-    names = extract_payload(payload, OTA_DIR / "extracted", skip=skip)
-    print(f"  {len(names)} images ready in "
-          f"{(OTA_DIR / 'extracted').relative_to(HERE)}")
+    only = os.environ.get("RELEASE")
+    for name, rel in RELEASES.items():
+        if only and name != only:
+            continue
+        out = RELEASES_DIR / name
+        out.mkdir(parents=True, exist_ok=True)
+        print(f"\n  [{name}] {rel['what']}")
+        payload = out / "payload.bin"
+        if not payload.exists() or FORCE:
+            print("  unzipping payload.bin")
+            with zipfile.ZipFile(DOWNLOADS / rel["file"]) as z:
+                for member in ("payload.bin", "payload_properties.txt",
+                               "care_map.pb", "care_map.txt",
+                               "META-INF/com/android/metadata"):
+                    if member in z.namelist():
+                        z.extract(member, out)
+        names = extract_payload(payload, out / "images", skip=skip)
+        print(f"  {len(names)} images ready in "
+              f"{(out / 'images').relative_to(HERE)}")
 
 
 def main():
@@ -435,8 +461,11 @@ def main():
     print("\nBootstrap complete.\n")
     print("Put the phone in EDL: power off fully, then hold Volume Up +")
     print("Volume Down together and plug in USB. The screen stays black;")
-    print("lsusb should show 05c6:9008. Then:\n")
-    print(f"    {VPY.relative_to(HERE)} restore-oos11.py\n")
+    print("lsusb should show 05c6:9008. Then pick a release:\n")
+    for name, rel in RELEASES.items():
+        print(f"    RELEASE={name:<6} {VPY.relative_to(HERE)} "
+              f"restore-android.py   # {rel['what']}")
+    print()
 
 
 if __name__ == "__main__":

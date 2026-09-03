@@ -35,6 +35,7 @@ recomputes both CRC32s.
 import hashlib
 import os
 import struct
+import shutil
 import subprocess
 import sys
 import time
@@ -49,7 +50,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 EDL_DIR = f"{ROOT}/edl"
 LOADER = f"{ROOT}/msm/extract/prog_firehose_ddr.elf"
 GPT_TEMPLATE = f"{ROOT}/msm/extract/gpt_main0.bin"
-IMG_DIR = f"{ROOT}/stock-oxygenos-11/extracted"
+RELEASE = os.environ.get("RELEASE", "oos11")
+IMG_DIR = f"{ROOT}/releases/{RELEASE}/images"
 WORK = f"{ROOT}/.work"
 
 SEC = 4096
@@ -68,12 +70,14 @@ SPLIT_ALIGN = 4096        # 16 MiB; the UFS erase block is 8 KiB
 # Fixed so that rebuilding the same layout twice produces the same table.
 LINUX_UUID = "5f8c6d21-3b47-4a19-9e02-7c1d4a6b8e33"
 
-# /data must be ext4. vendor.img's fstab.qcom says:
+# The filesystem for /data is READ OUT OF THE RELEASE, never assumed. On OOS11
+# vendor.img's fstab.qcom says:
 #   .../userdata /data ext4 ... wait,check,fileencryption=ice,quota
-# There is no `formattable` flag, so a wrong filesystem type is an
-# unrecoverable mount failure -> bootloop. `fastboot -w` gets this wrong: it
-# asks the bootloader, which answers f2fs.
-DATA_FS = "ext4"
+# There is no `formattable` flag, so a wrong type is an unrecoverable mount
+# failure -> bootloop. `fastboot -w` gets this wrong: it asks the bootloader,
+# which answers f2fs. Different OxygenOS versions could legitimately differ,
+# so derive it per release rather than hardcoding one answer.
+DATA_FS_FALLBACK = "ext4"
 
 # Images in IMG_DIR deliberately not flashed.
 SKIP = {
@@ -505,6 +509,34 @@ def phase_edl():
     api.deinit()
 
 
+def data_fs():
+    """Read the filesystem type for /data out of this release's vendor.img.
+
+    Uses debugfs so nothing has to be mounted and no root is needed. Falls
+    back with a warning rather than guessing silently, because getting this
+    wrong bootloops the device with no recovery path.
+    """
+    vendor = os.path.join(IMG_DIR, "vendor.img")
+    if not (os.path.exists(vendor) and shutil.which("debugfs")):
+        print(f"  WARNING: cannot inspect {vendor}; assuming {DATA_FS_FALLBACK}")
+        return DATA_FS_FALLBACK
+    for fstab in ("fstab.qcom", "fstab_qcom", "fstab.default"):
+        r = subprocess.run(["debugfs", "-R", f"cat /etc/{fstab}", vendor],
+                           capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("#") or "userdata" not in line:
+                continue
+            parts = line.split()
+            # <src> <mnt_point> <type> <mnt_flags> <fs_mgr_flags>
+            if len(parts) >= 3 and parts[1] == "/data":
+                print(f"  /data type from {fstab}: {parts[2]}")
+                return parts[2]
+    print(f"  WARNING: no /data line found in vendor.img; "
+          f"assuming {DATA_FS_FALLBACK}")
+    return DATA_FS_FALLBACK
+
+
 def fb(*args, timeout=900):
     return subprocess.run(["fastboot", *args], capture_output=True,
                           text=True, timeout=timeout)
@@ -529,9 +561,10 @@ def phase_fastboot():
     print("  clearing slot flags (set_active a)")
     fb("set_active", "a")
 
-    print(f"  formatting /data as {DATA_FS}"
+    fs = data_fs()
+    print(f"  formatting /data as {fs}"
           f" (fastboot -w would use the bootloader's f2fs answer and bootloop)")
-    r = fb("format:" + DATA_FS, "userdata")
+    r = fb("format:" + fs, "userdata")
     if r.returncode != 0:
         raise SystemExit(f"ABORT: format failed:\n{r.stdout}\n{r.stderr}")
 

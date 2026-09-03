@@ -12,11 +12,16 @@ Planned, not built: postmarketOS, LineageOS, and dual-booting a stock Android
 against a self-built Linux. See [Roadmap](#roadmap).
 
 ```bash
-git clone <this repo> oneplus6t-restore
-cd oneplus6t-restore
-python3 bootstrap.py                      # downloads + extracts everything
-.venv/bin/python restore-oos11.py         # with the phone in EDL
+git clone https://github.com/briancappello/oneplus6t
+cd oneplus6t
+python3 bootstrap.py                                     # fetch + extract
+RELEASE=oos11 .venv/bin/python restore-android.py        # phone in EDL
 ```
+
+| `RELEASE` | Build | Android |
+|---|---|---|
+| `oos11` (default) | OxygenOS 11.1.2.2 — `34.J.62` | 11, `RKQ1.201217.002` |
+| `oos9` | OxygenOS 9 — `34.O.24` | 9, `PKQ1.180716.001` |
 
 ## Entering EDL
 
@@ -33,11 +38,15 @@ This bootloader rejects `fastboot oem edl`, `fastboot oem enter-dload` and
 
 | Step | Output |
 |---|---|
-| Download 2 archives (resumable, SHA256-pinned) | `downloads/` |
+| Download the archives (resumable, SHA256-pinned) | `downloads/` |
 | Clone `edl` + `oppo_decrypt` at pinned commits | `edl/`, `oppo_decrypt/` |
 | Create venv, install deps, patch the `edl` qfil bug | `.venv/` |
 | Decrypt the MSM `.ops` | `msm/extract/prog_firehose_ddr.elf`, `gpt_main0.bin` |
-| Extract the OTA `payload.bin` | `stock-oxygenos-11/extracted/*.img` |
+| Extract each release's `payload.bin` | `releases/<name>/images/*.img` |
+
+The MSM package is not an OS to install — it is only where the firehose loader
+and the LUN0 GPT template come from, and it is needed whichever release you
+flash. `RELEASE=<name> python3 bootstrap.py` extracts just one.
 
 Everything is idempotent and hash-verified, so re-running after an interrupted
 download or extraction is safe.
@@ -69,6 +78,12 @@ stops in fastboot, then finishes there without you touching it.
 | `START=n` | resume the flash after an interruption |
 | `FORCE_GPT=1` | rewrite the GPT even if it is already consistent |
 | `LAYOUT=dualboot` | split `userdata` 50/50 and add a `linuxroot` partition |
+| `RELEASE=oos9` | flash OxygenOS 9 instead of the default OxygenOS 11 |
+
+The filesystem for `/data` is **read out of the release being flashed** —
+`debugfs` pulls `/etc/fstab.qcom` from that release's `vendor.img` and takes
+the type from the `/data` line. It is never assumed, because assuming it is
+exactly what bootloops the device (see below). Both OOS9 and OOS11 say `ext4`.
 
 Sequence: measure LUN0 → finish the GPT template → write and verify primary +
 backup → flash 23 partitions across LUN0/1/2/4 → verify each by chunked
@@ -126,6 +141,7 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 | | Status |
 |---|---|
 | Restore stock OxygenOS 11 from EDL | done |
+| Flash OxygenOS 9 | done (`RELEASE=oos9`), not yet run on hardware |
 | Flash postmarketOS | `flash-pmos.sh`, works, not yet integrated |
 | Flash LineageOS | not started |
 | Dual-boot Android + a self-built Linux | GPT layout done, boot side not started |
