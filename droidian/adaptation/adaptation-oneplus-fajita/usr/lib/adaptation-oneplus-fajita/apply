@@ -47,6 +47,27 @@ fi
 # so it cannot be set afterwards. Bind a patched copy over the container's view
 # of the file instead. This is the device's own build.prop with one line
 # changed; everything else is passed through untouched.
+# Do not wait 30s for a bridge that is never coming.
+#
+# lxc.service runs lxc-containers start, whose wait_for_bridge() polls
+# `for try in $(seq 1 30)` with a 1s sleep for the bridge named by
+# lxc.net.0.link in /etc/lxc/default.conf (lxcbr0). It is gated on
+# USE_LXC_BRIDGE, which /etc/default/lxc sets to false and
+# /etc/default/lxc-net then overrides back to true.
+#
+# lxcbr0 never appears: lxc-net.service fails on this device ("Perhaps
+# ip6tables or your kernel needs to be upgraded"). So the loop always runs to
+# exhaustion, costing exactly 30s, on the critical path -- lxc.service gates
+# multi-user.target, so it delayed graphical.target by the same 30s every boot.
+#
+# Nothing here wants the bridge. The android container is configured
+# lxc.net.0.type = none. Measured: lxc-containers start 30.29s -> 0.044s.
+LXC_NET_DEFAULTS=/etc/default/lxc-net
+if [ -f "$LXC_NET_DEFAULTS" ] && grep -q '^USE_LXC_BRIDGE="true"' "$LXC_NET_DEFAULTS"; then
+    sed -i 's/^USE_LXC_BRIDGE="true"/USE_LXC_BRIDGE="false"/' "$LXC_NET_DEFAULTS"
+    echo "adaptation-oneplus-fajita: disabled the unused lxc bridge wait"
+fi
+
 LXC_DIR=/var/lib/lxc/android
 VENDOR_PROP="$LXC_DIR/rootfs/vendor/build.prop"
 OVERRIDE="$LXC_DIR/vendor-build.prop"
