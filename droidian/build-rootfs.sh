@@ -85,6 +85,95 @@ resize2fs -f "$STAGE/rootfs.img" "$ROOTFS_SIZE" 2>&1 | tail -1
 ln -sfn /halium-system/var/lib/lxc/android/android-rootfs.img \
         "$STAGE/android-rootfs.img"
 
+# ---------------------------------------------------------------- adaptation
+# Install our .debs into the rootfs so the fixes survive a reinstall. This is
+# the seam that makes the whole pipeline worth having: without it every fix
+# lives only on the running device and the next flash destroys it.
+#
+# Runs in the Droidian container because the host (Arch) has no dpkg. fuse2fs
+# mounts the image rootlessly and dpkg --root installs arm64 packages from an
+# amd64 container.
+#
+# Our three adaptation packages carry no maintainer scripts, so they alone need
+# no emulation. droidian-camera is built with dh and DOES ship postinst/postrm,
+# and dpkg --root chroots to run them -- so installing it requires qemu-aarch64
+# binfmt with the F flag, which check-env.sh already asserts for the build role.
+#
+# /dev must be bind-mounted over the image's own. The image does contain a
+# /dev/null character device, but FUSE mounts are nodev, so opening it fails
+# with EPERM. Without this, droidian-camera's postinst hits
+# "cannot create /dev/null: Permission denied" on its `command -v ... >/dev/null`
+# line. That failure sits inside an `if` condition, so `set -e` does not trip
+# and dpkg still reports success -- a silently half-applied package.
+if [ "${ADAPTATION:-1}" = 1 ]; then
+    debs=$(ls "$HERE"/out-adaptation/*.deb "$HERE"/out-camera/*.deb 2>/dev/null || true)
+    if [ -z "$debs" ]; then
+        echo "ABORT: no .debs found. Run droidian/adaptation/build-adaptation.sh" >&2
+        echo "       and droidian/build-camera.sh first, or set ADAPTATION=0." >&2
+        exit 1
+    fi
+    say "installing adaptation packages into rootfs.img"
+    mkdir -p "$STAGE/debs"
+    cp $debs "$STAGE/debs/"
+
+    runtime() {
+        command -v docker >/dev/null && { echo docker; return; }
+        command -v podman >/dev/null && { echo podman; return; }
+        echo "Need docker or podman." >&2; exit 1
+    }
+
+    # --cap-add SYS_ADMIN is a capability inside the container's user
+    # namespace, not host root. Without it fusermount3 fails with EPERM.
+    $(runtime) run --rm --device /dev/fuse --cap-add SYS_ADMIN \
+        --security-opt apparmor=unconfined \
+        -v "$STAGE":/stage \
+        quay.io/droidian/build-essential:current-amd64 /bin/sh -c '
+set -e
+apt-get update -qq
+apt-get install -y -qq fuse2fs fuse3 >/dev/null
+mkdir -p /mnt/rootfs
+# fuse2fs forks, so its exit code is meaningless. Assert with mountpoint.
+fuse2fs -o rw,fakeroot /stage/rootfs.img /mnt/rootfs 2>&1 | grep -v journal || true
+mountpoint -q /mnt/rootfs || { echo "fuse2fs failed to mount"; exit 1; }
+mount --bind /dev /mnt/rootfs/dev
+trap "umount /mnt/rootfs/dev 2>/dev/null || true; fusermount3 -u /mnt/rootfs 2>/dev/null || true" EXIT
+
+dpkg --root=/mnt/rootfs -i /stage/debs/*.deb
+dpkg --root=/mnt/rootfs --audit
+
+# A half-configured package still lets dpkg exit 0, so assert the state
+# explicitly: all four must be "ii", not "iF" or "iU".
+want=4
+got=$(dpkg --root=/mnt/rootfs -l halium-hostdev-perms halium-oldkernel-compat \
+        adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep -c "^ii")
+dpkg --root=/mnt/rootfs -l halium-hostdev-perms halium-oldkernel-compat \
+        adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^[a-z][a-zA-Z]"
+if [ "$got" != "$want" ]; then
+    echo "ABORT: expected $want packages in state ii, found $got" >&2
+    exit 1
+fi
+
+umount /mnt/rootfs/dev
+trap - EXIT
+fusermount3 -u /mnt/rootfs
+'
+    rm -rf "$STAGE/debs"
+    e2fsck -fy "$STAGE/rootfs.img" >/dev/null 2>&1 || true   # fuse2fs bypasses the journal
+
+    for p in halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita; do
+        # debugfs exits 0 even when the file does not exist -- it prints
+        # "File not found by ext2_lookup" to stderr and carries on. Asserting on
+        # its exit code silently passes for a package that never installed, so
+        # assert on the OUTPUT: a real stat always begins a line with "Inode:".
+        if ! debugfs -R "stat /var/lib/dpkg/info/$p.list" "$STAGE/rootfs.img" 2>&1 \
+             | grep -q '^Inode:'; then
+            echo "ABORT: $p is not installed in rootfs.img" >&2
+            exit 1
+        fi
+    done
+    say "adaptation packages verified present in rootfs.img"
+fi
+
 # ---------------------------------------------------------------- pack
 say "building userdata.img (WITH journal - see comment at top)"
 rm -f "$OUT"

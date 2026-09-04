@@ -1324,9 +1324,20 @@ In `droidian/build-rootfs.sh`, after the `resize2fs` block and the
 # lives only on the running device and the next flash destroys it.
 #
 # Runs in the Droidian container because the host (Arch) has no dpkg. fuse2fs
-# mounts the image rootlessly; dpkg --root installs arm64 packages from an
-# amd64 container, which works ONLY because these packages have no maintainer
-# scripts, so no target binary is ever executed.
+# mounts the image rootlessly and dpkg --root installs arm64 packages from an
+# amd64 container.
+#
+# Our three adaptation packages carry no maintainer scripts, so they alone need
+# no emulation. droidian-camera is built with dh and DOES ship postinst/postrm,
+# and dpkg --root chroots to run them -- so installing it requires qemu-aarch64
+# binfmt with the F flag, which check-env.sh already asserts for the build role.
+#
+# /dev must be bind-mounted over the image's own. The image does contain a
+# /dev/null character device, but FUSE mounts are nodev, so opening it fails
+# with EPERM. Without this, droidian-camera's postinst hits
+# "cannot create /dev/null: Permission denied" on its `command -v ... >/dev/null`
+# line. That failure sits inside an `if` condition, so `set -e` does not trip
+# and dpkg still reports success -- a silently half-applied package.
 if [ "${ADAPTATION:-1}" = 1 ]; then
     debs=$(ls "$HERE"/out-adaptation/*.deb "$HERE"/out-camera/*.deb 2>/dev/null || true)
     if [ -z "$debs" ]; then
@@ -1357,9 +1368,26 @@ mkdir -p /mnt/rootfs
 # fuse2fs forks, so its exit code is meaningless. Assert with mountpoint.
 fuse2fs -o rw,fakeroot /stage/rootfs.img /mnt/rootfs 2>&1 | grep -v journal || true
 mountpoint -q /mnt/rootfs || { echo "fuse2fs failed to mount"; exit 1; }
+mount --bind /dev /mnt/rootfs/dev
+trap "umount /mnt/rootfs/dev 2>/dev/null || true; fusermount3 -u /mnt/rootfs 2>/dev/null || true" EXIT
+
 dpkg --root=/mnt/rootfs -i /stage/debs/*.deb
-dpkg --root=/mnt/rootfs -l | grep -E "halium-hostdev-perms|halium-oldkernel-compat|adaptation-oneplus-fajita|droidian-camera"
 dpkg --root=/mnt/rootfs --audit
+
+# A half-configured package still lets dpkg exit 0, so assert the state
+# explicitly: all four must be "ii", not "iF" or "iU".
+want=4
+got=$(dpkg --root=/mnt/rootfs -l halium-hostdev-perms halium-oldkernel-compat \
+        adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep -c "^ii")
+dpkg --root=/mnt/rootfs -l halium-hostdev-perms halium-oldkernel-compat \
+        adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^[a-z][a-zA-Z]"
+if [ "$got" != "$want" ]; then
+    echo "ABORT: expected $want packages in state ii, found $got" >&2
+    exit 1
+fi
+
+umount /mnt/rootfs/dev
+trap - EXIT
 fusermount3 -u /mnt/rootfs
 '
     rm -rf "$STAGE/debs"
