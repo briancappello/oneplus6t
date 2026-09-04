@@ -477,10 +477,45 @@ package installs half-configured. Our three packages carry no maintainer scripts
 and need no emulation; `droidian-camera` is built with `dh`, ships
 `postinst`/`postrm`, and `dpkg --root` chroots to run them under qemu binfmt.
 
-**First boot after a flash can fail phosh.** `start-post` times out after 30 s
-while `lxc.service` is still starting the container and the `runonce@` services
-are running; `phoc` never logs. It recovers on the next boot. Unrelated to these
-packages — the adaptation unit finishes in ~7 s, long before phosh starts.
+### The clock, and why it broke the first boot
+
+The fajita's `qpnp` RTC **free-runs from zero and is read-only** — `RTC_SET_TIME`
+returns `EINVAL` because the device tree has no `qcom,qpnp-rtc-write` — and the
+kernel applies it anyway via `CONFIG_RTC_HCTOSYS`:
+
+```
+qcom,qpnp-rtc ...: setting system clock to 1970-01-02 05:30:25 UTC
+```
+
+Droidian already compensates: `/usr/bin/timekeeper` stores
+`wall_clock − /sys/class/rtc/rtc0/since_epoch` in `/data/time/timekeep` and adds
+it back at boot. But `/data` is the Android userdata partition, **which a reflash
+wipes** — so on a freshly flashed device timekeeper restores `since_epoch + 0`
+and the clock lands in 1970.
+
+That is not cosmetic. It breaks TLS and `apt`, trips the polkit password-age
+check (`account droidian has password changed in future`), and makes journald log
+`Time jumped backwards, rotating` and discard boots — which destroyed the
+evidence for a separate bug.
+
+`adaptation-clock-floor.service` runs **after** timekeeper, raises the clock to
+the package build time if timekeeper restored something implausible, and hands
+the corrected value straight back to `timekeeper store`. Forward-only, so it
+cannot fight NTP. From the second boot on, Droidian's own mechanism carries it.
+
+**Ordering is the subtle part.** `timekeeper.service` keeps its default
+dependencies and is therefore already `After=sysinit.target`. Adding
+`Before=sysinit.target` to our unit made a cycle, which systemd resolved by
+deleting our job:
+
+```
+sysinit.target: Found ordering cycle on adaptation-clock-floor.service/start
+Job adaptation-clock-floor.service/start deleted to break ordering cycle
+```
+
+The unit then reads `loaded / inactive / success` — indistinguishable at a glance
+from one that ran and did nothing. `verify-device.sh` asserts no ordering cycles
+and no backward time jumps for exactly this reason.
 
 ### Camera
 
