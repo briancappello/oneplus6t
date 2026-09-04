@@ -156,8 +156,34 @@ build_once kernel > /dev/null 2>&1
 FORCE=1 build_once kernel > /tmp/b-m5.$$ 2>&1
 expect_contains "FORCE rebuilds regardless" "$ftlog" 'kernel'
 
+# --plan: Contract 2, the file provision.sh --plan-only emits.
+printf '{"build":["camera"],"force":false}\n' > /tmp/b-plan.$$
+build_once --plan /tmp/b-plan.$$ > /tmp/b-p1.$$ 2>&1; rc=$?
+expect_rc "a plan builds" 0 "$rc"
+expect_contains "a plan selects its targets" "$ftlog" 'camera'
+expect_absent  "a plan builds nothing else"  "$ftlog" 'rootfs'
+
+printf '{"build":["nosuch"]}\n' > /tmp/b-bad1.$$
+build_once --plan /tmp/b-bad1.$$ > /tmp/b-p2.$$ 2>&1; rc=$?
+expect_rc "a plan naming an unknown target fails" 1 "$rc"
+expect_contains "the unknown target is named" /tmp/b-p2.$$ 'nosuch'
+
+build_once --plan /tmp/does-not-exist.json > /tmp/b-p3.$$ 2>&1; rc=$?
+expect_rc "a missing plan file fails" 1 "$rc"
+
+printf 'not json at all\n' > /tmp/b-junk.$$
+build_once --plan /tmp/b-junk.$$ > /tmp/b-p4.$$ 2>&1; rc=$?
+expect_rc "a malformed plan fails loudly" 1 "$rc"
+
+# force in the plan overrides an up-to-date decision, for when the phone host
+# has evidence the worker cannot see.
+printf '{"build":["camera"],"force":true}\n' > /tmp/b-plan2.$$
+build_once --plan /tmp/b-plan2.$$ > /dev/null 2>&1
+expect_contains "a forcing plan rebuilds" "$ftlog" 'camera'
+
 rm -rf "$bout" "$srcrepo" "$ftlog" /tmp/b-m1.$$ /tmp/b-m2.$$ /tmp/b-m3.$$ \
-       /tmp/b-m4.$$ /tmp/b-m5.$$ /tmp/b-man.$$
+       /tmp/b-m4.$$ /tmp/b-m5.$$ /tmp/b-man.$$ /tmp/b-plan.$$ /tmp/b-plan2.$$ \
+       /tmp/b-bad1.$$ /tmp/b-junk.$$ /tmp/b-p1.$$ /tmp/b-p2.$$ /tmp/b-p3.$$ /tmp/b-p4.$$
 
 echo
 echo ">>> provision.sh tests"
@@ -183,6 +209,28 @@ printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-empty.$$
 "$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest /tmp/m-empty.$$ \
     > /tmp/pl-empty.$$ 2>/dev/null
 expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
+
+# The round trip. provision.sh decides from device evidence and emits a plan;
+# build.sh consumes exactly that file. These two agreed only on paper until the
+# manifest they share was made a single contract, so the seam is worth pinning.
+rtsrc=/tmp/rt-src.$$; rtout=/tmp/rt-out.$$
+rm -rf "$rtsrc" "$rtout"
+mkdir -p "$rtsrc"/kernel "$rtsrc"/camera "$rtsrc"/adaptation "$rtsrc"/droidian
+git -C "$rtsrc" init -q
+printf 'v1\n' > "$rtsrc/kernel/f"
+git -C "$rtsrc" add -A
+git -C "$rtsrc" -c user.email=t@t -c user.name=t commit -qm one
+SRC="$rtsrc" OUT="$rtout" FAKE_BUILD="$ROOT/tests/fixtures/fake-target" \
+    FT_LOG=/tmp/rt-log.$$ FT_RC=0 "$BUILD" --plan /tmp/pl-empty.$$ \
+    > /tmp/rt-b.$$ 2>&1; rc=$?
+expect_rc "build.sh consumes the plan provision.sh emitted" 0 "$rc"
+expect_contains "the round trip builds the rootfs" /tmp/rt-log.$$ 'rootfs'
+# And the manifest it produces is the one provision.sh reads back.
+"$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$rtout/manifest.json" \
+    > /tmp/rt-plan2.$$ 2>/dev/null
+expect_json "the manifest build.sh wrote is readable by provision.sh" /tmp/rt-plan2.$$
+expect_absent "a freshly built target is no longer requested" /tmp/rt-plan2.$$ '"rootfs"'
+rm -rf "$rtsrc" "$rtout" /tmp/rt-log.$$ /tmp/rt-b.$$ /tmp/rt-plan2.$$
 
 rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ /tmp/m-empty.$$ /tmp/pl-empty.$$
 

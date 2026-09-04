@@ -37,6 +37,30 @@ target_deps() {
     printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$1" '$1==n {print $2; exit}'
 }
 
+# target_exists <name> — true when the name is in the table.
+target_exists() {
+    printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$1" '$1==n {f=1} END {exit !f}'
+}
+
+# read_plan <file> — print "<force> <target...>" for a Contract 2 plan file.
+# A plan naming something unbuildable is a mistake worth stopping for: it means
+# the phone host and the worker disagree about what exists.
+read_plan() {
+    PLAN="$1" python3 - <<'PY'
+import json, os, sys
+try:
+    doc = json.load(open(os.environ["PLAN"]))
+except Exception as exc:
+    sys.stderr.write("build.sh: malformed plan: %s\n" % exc)
+    sys.exit(1)
+targets = doc.get("build", [])
+if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
+    sys.stderr.write("build.sh: plan 'build' must be a list of names\n")
+    sys.exit(1)
+print("%d %s" % (1 if doc.get("force") else 0, " ".join(targets)))
+PY
+}
+
 # target_outputs <name> — the declared output paths, relative to OUT.
 target_outputs() {
     printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$1" '$1==n {print $3; exit}'
@@ -249,6 +273,9 @@ build_targets() {
     local order level t rc reason
     local -A pids=()
     local -a todo=()
+    for t in "$@"; do
+        target_exists "$t" || { echo "build.sh: unknown target: $t" >&2; return 1; }
+    done
     order="$(resolve_order "$@")" || return 1
     while IFS= read -r level; do
         [ -n "$level" ] || continue
@@ -284,7 +311,21 @@ main() {
         list_targets
         return 0
     fi
-    [ $# -ge 1 ] || { list_targets; echo >&2; echo "usage: build.sh [--list] [target ...]" >&2; return 1; }
+
+    if [ "${1:-}" = "--plan" ]; then
+        local pf="${2:-}" line targets
+        [ -n "$pf" ] || { echo "build.sh: --plan needs a file" >&2; return 1; }
+        [ -f "$pf" ] || { echo "build.sh: plan not found: $pf" >&2; return 1; }
+        line="$(read_plan "$pf")" || return 1
+        if [ "${line%% *}" = 1 ]; then FORCE=1; fi
+        targets="${line#* }"
+        [ -n "$targets" ] || { echo "build.sh: plan builds nothing" >&2; return 1; }
+        # shellcheck disable=SC2086 -- $targets is a whitespace-separated list
+        build_targets $targets
+        return
+    fi
+
+    [ $# -ge 1 ] || { list_targets; echo >&2; echo "usage: build.sh [--list] [--plan FILE] [target ...]" >&2; return 1; }
     build_targets "$@"
 }
 
