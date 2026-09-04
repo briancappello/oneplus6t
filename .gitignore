@@ -31,3 +31,6 @@ droidian-build-tools/
 droidian/stage/
 droidian/rootfs/
 droidian/userdata.img
+
+# Ramdumps pulled by droidian/dump-ramoops.py -- device RAM, regenerable
+memory/
