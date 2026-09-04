@@ -12,6 +12,15 @@ releases/
 *postmarketOS*.img
 *postmarketOS*.img.xz
 
+# Build output. build.sh writes artifacts and manifest.json here; they are
+# reproducible from the source commit the manifest records, so they are not
+# worth versioning and a stale one committed here is actively misleading.
+out/
+
+# Records that the operator accepted the destructive EDL warning on this
+# checkout. Local state, never shared.
+.edl-acknowledged
+
 # Local scratch
 *.pyc
 __pycache__/
