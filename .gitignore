@@ -37,4 +37,5 @@ memory/
 
 # droidian-camera fork: source is cloned and patched, artifacts generated
 droidian/camera-src/
+droidian/out-adaptation/
 droidian/out-camera/
