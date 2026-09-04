@@ -198,6 +198,38 @@ expect_contains "fajita fragment keeps hwbinder fixed" /tmp/hhp-faj.$$ 'KERNEL==
 expect_absent  "fajita fragment keeps diag denied"    /tmp/hhp-faj.$$ 'KERNEL=="diag"'
 rm -f /tmp/hhp-faj.$$
 
+# The clock floor must only ever move time FORWARD. Moving it backward would
+# fight NTP; not moving it at all leaves 1970, which breaks TLS, apt, polkit's
+# password-age check and journald retention.
+CF="$ADAPT/adaptation-oneplus-fajita/usr/lib/adaptation-oneplus-fajita/clock-floor"
+cf_stamp=$(mktemp); touch -d "@1700000000" "$cf_stamp"
+cf_set=$(mktemp); cf_log=$(mktemp)
+# The script sends the set command's stdout to /dev/null, so the fake must
+# record a SIDE EFFECT. Probing its stdout would make every "was not called"
+# case pass vacuously.
+printf '#!/bin/sh\necho "SET $1" >> %s\n' "$cf_log" > "$cf_set"; chmod +x "$cf_set"
+
+cf_tk=$(mktemp)
+printf '#!/bin/sh\necho "TIMEKEEPER $1" >> %s\n' "$cf_log" > "$cf_tk"; chmod +x "$cf_tk"
+
+: > "$cf_log"
+ACF_STAMP="$cf_stamp" ACF_NOW=100 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" "$CF" > /tmp/cf-old.$$ 2>&1
+expect_contains "clock behind the floor is advanced" "$cf_log" 'SET @1700000000'
+expect_contains "the advance is reported"           /tmp/cf-old.$$ 'advanced 100 -> 1700000000'
+# Without this the correction lives only in RAM and a battery pull loses it.
+expect_contains "the correction is handed to timekeeper" "$cf_log" 'TIMEKEEPER store'
+
+: > "$cf_log"
+ACF_STAMP="$cf_stamp" ACF_NOW=1900000000 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" "$CF" > /tmp/cf-new.$$ 2>&1
+expect_absent  "clock ahead of the floor is left alone" "$cf_log" 'SET '
+expect_absent  "timekeeper not disturbed on a no-op"    "$cf_log" 'TIMEKEEPER'
+expect_contains "no-op is reported"                     /tmp/cf-new.$$ 'already at or past'
+
+: > "$cf_log"
+ACF_STAMP=/nonexistent ACF_NOW=100 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" "$CF" > /tmp/cf-nostamp.$$ 2>&1
+expect_absent "missing stamp never sets the clock" "$cf_log" 'SET '
+rm -f "$cf_stamp" "$cf_set" "$cf_log" "$cf_tk" /tmp/cf-old.$$ /tmp/cf-new.$$ /tmp/cf-nostamp.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

@@ -1,0 +1,28 @@
+[Unit]
+Description=Advance the clock past 1970 on a device with a read-only RTC
+Documentation=https://github.com/briancappello/oneplus6t
+# MUST be ordered after timekeeper: it calls settimeofday from the RTC offset
+# and would otherwise overwrite this correction a moment later. On a freshly
+# flashed device its offset file is gone with the wiped userdata, so it restores
+# 1970.
+#
+# Do NOT add Before=sysinit.target here. timekeeper.service keeps its default
+# dependencies, so it is already ordered After=sysinit.target, and combining the
+# two makes a cycle that systemd resolves by deleting THIS job silently:
+#
+#   sysinit.target: Found ordering cycle on adaptation-clock-floor.service/start
+#   Job adaptation-clock-floor.service/start deleted to break ordering cycle
+#
+# The unit then shows LoadState=loaded, ActiveState=inactive, Result=success --
+# indistinguishable at a glance from a unit that ran and did nothing.
+After=timekeeper.service
+Wants=timekeeper.service
+ConditionPathExists=/usr/lib/adaptation-oneplus-fajita/build-stamp
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/adaptation-oneplus-fajita/clock-floor
+
+[Install]
+WantedBy=sysinit.target

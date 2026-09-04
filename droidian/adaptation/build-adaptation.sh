@@ -36,7 +36,14 @@ set -e
 for p in '"$PKGS"'; do
     cp -a "/src/$p" "/tmp/$p"
     chown -R root:root "/tmp/$p"
-    find "/tmp/$p" -name apply -o -name generate-rules | xargs -r chmod 0755
+    find "/tmp/$p" \( -name apply -o -name generate-rules -o -name clock-floor \) \
+         -exec chmod 0755 {} +
+    # The clock floor is this file s mtime. Generated at build time, never
+    # committed, so a rebuild always raises the floor rather than pinning it to
+    # whenever the file happened to be added to git.
+    if [ -d "/tmp/$p/usr/lib/adaptation-oneplus-fajita" ]; then
+        touch "/tmp/$p/usr/lib/adaptation-oneplus-fajita/build-stamp"
+    fi
     dpkg-deb --build "/tmp/$p" /out/
 done
 '

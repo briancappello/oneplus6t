@@ -23,14 +23,16 @@ for n in /dev/hwbinder /dev/kgsl-3d0 /dev/diag /dev/input/event0; do
     echo "node $n $(stat -c "%a %U:%G" "$n" 2>/dev/null || echo MISSING)"
 done
 # sudo logs the full command it runs, so a journal grep for a string that
-# appears in THIS script matches its own invocation. Drop sudo lines first or
-# every journal count is inflated by one and reports a failure that is really
-# just the measurement observing itself.
-jrn="journalctl -b --no-pager"
-echo "gl=$($jrn | grep -v "sudo\[" | grep -c "GL renderer: Adreno")"
+# appears in THIS script matches its own invocation. Every journal count would
+# be inflated by one and report a failure that is really the measurement
+# observing itself. The sudo filter lives INSIDE this function rather than at
+# each call site, because leaving it to the call site got forgotten twice and
+# produced two phantom failures.
+jrn() { journalctl -b --no-pager | grep -v "sudo\["; }
+echo "gl=$(jrn | grep -c "GL renderer: Adreno")"
 echo "pkgs=$(dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita 2>/dev/null | grep -c "^ii")"
 echo "divert=$(dpkg-divert --list | grep -c plugins-disabled/libgstcamerabin)"
-echo "camerr=$($jrn | grep -v "sudo\[" | grep -c "CameraBin error")"
+echo "camerr=$(jrn | grep -c "CameraBin error")"
 echo "setuid=$(stat -c "%a" /usr/lib/polkit-1/polkit-agent-helper-1 2>/dev/null)"
 echo "hhp=$(systemctl is-active halium-hostdev-perms.service 2>/dev/null)"
 # The deny invariant is about REACHABILITY, not a particular mode. /dev/diag is
@@ -49,6 +51,17 @@ echo "rules=$(grep -c ACTION $R 2>/dev/null)"
 # so each boot measures a pristine /dev. Any file in /etc outranks /run and
 # brings the bug straight back.
 echo "stale=$([ -e /etc/udev/rules.d/70-halium-hostdev-perms.rules ] && echo yes || echo no)"
+# The qpnp RTC free-runs from zero and is read-only, and a reflash wipes
+# timekeeper offset file, so a stock boot comes up in 1970 -- which breaks TLS,
+# breaks apt, trips the polkit password-age check, and makes journald discard
+# boots. No apostrophes in this block: it is single-quoted all the way to the
+# remote shell, and one would end the quote and truncate the script.
+echo "epoch=$(date -u +%s)"
+echo "clockfloor=$(systemctl is-active adaptation-clock-floor.service 2>/dev/null)"
+# systemd resolves an ordering cycle by deleting one job silently. The victim
+# then looks identical to a unit that ran and did nothing, so check explicitly.
+echo "cycles=$(jrn | grep -c "Found ordering cycle")"
+echo "timewarp=$(jrn | grep -c "Time jumped backwards")"
 # NOT asserted: that a given node appears in our ruleset. Which nodes need our
 # help legitimately varies -- the kgsl driver creates /dev/kgsl-3d0 and /dev/ion
 # already at their ueventd.rc values on some boots, and skipping an
@@ -76,5 +89,11 @@ ck "hostdev-perms unit ran"       '[ "$(val hhp)" = active ]'
 ck "polkit helper is setuid"      '[ "$(val setuid)" = 4755 ]'
 ck "camerabin diverted"           '[ "$(val divert)" = 1 ]'
 ck "no CameraBin error"           '[ "$(val camerr)" = 0 ]'
+ck "clock-floor unit ran"         '[ "$(val clockfloor)" = active ]'
+# 1767225600 = 2026-01-01. Anything below means the clock is still at the RTC's
+# 1970, or the floor did not apply.
+ck "clock is not stuck in 1970"   '[ "$(val epoch)" -gt 1767225600 ]'
+ck "no systemd ordering cycles"   '[ "$(val cycles)" = 0 ]'
+ck "clock never jumped backwards" '[ "$(val timewarp)" = 0 ]'
 [ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit $fail

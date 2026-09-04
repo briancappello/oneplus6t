@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Bootstrap Droidian's timekeeper so a freshly flashed device does not boot
+# into 1970.
+#
+# The fajita's qpnp RTC free-runs from zero and is READ-ONLY: RTC_SET_TIME
+# returns EINVAL because the device tree has no qcom,qpnp-rtc-write. Droidian
+# already compensates with /usr/bin/timekeeper, which stores
+# (wall_clock - /sys/class/rtc/rtc0/since_epoch) into /data/time/timekeep on
+# shutdown and adds it back on boot.
+#
+# That works only once the offset file exists. /data is the Android userdata
+# partition, which a reflash wipes, so on a freshly flashed device timekeeper
+# restores since_epoch + 0 and the clock becomes 1970-01-02. Verified:
+#
+#     timekeeper.service starts
+#     systemd-journald: Time jumped backwards, rotating.
+#
+# That is not cosmetic. It breaks TLS and apt, produces
+# "unix_chkpwd: account droidian has password changed in future", and makes
+# journald discard boots -- which destroyed the evidence for a separate bug.
+#
+# So: run AFTER timekeeper, and if it restored something implausible, raise the
+# clock to this package's build time and hand the corrected value straight back
+# to timekeeper. From then on Droidian's own mechanism carries it and this unit
+# no-ops. Only ever moves the clock FORWARD, so it cannot fight NTP.
+set -euo pipefail
+
+STAMP="${ACF_STAMP:-/usr/lib/adaptation-oneplus-fajita/build-stamp}"
+TIMEKEEPER="${ACF_TIMEKEEPER:-/usr/bin/timekeeper}"
+
+[ -e "$STAMP" ] || { echo "clock-floor: no stamp at $STAMP; nothing to do"; exit 0; }
+
+floor=$(stat -c %Y "$STAMP")
+now="${ACF_NOW:-$(date +%s)}"
+
+if [ "$now" -lt "$floor" ]; then
+    # Overridable so the branch is testable without touching the real clock.
+    ${ACF_SET_CMD:-date -u -s} "@$floor" >/dev/null
+    echo "clock-floor: advanced $now -> $floor"
+    # Persist through Droidian's own mechanism immediately, rather than relying
+    # on a clean shutdown -- a battery pull would otherwise lose the correction
+    # and the next boot would be 1970 again.
+    if [ -x "$TIMEKEEPER" ]; then
+        "$TIMEKEEPER" store && echo "clock-floor: offset stored via timekeeper"
+    fi
+else
+    echo "clock-floor: clock already at or past the floor ($now >= $floor)"
+fi
