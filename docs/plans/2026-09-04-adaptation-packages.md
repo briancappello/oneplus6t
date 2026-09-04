@@ -1041,12 +1041,31 @@ Immediately after the block above, add:
 ```bash
 if [ "${ADAPTATION:-1}" = 1 ]; then
     for p in halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita; do
-        debugfs -R "stat /var/lib/dpkg/info/$p.list" "$STAGE/rootfs.img" >/dev/null 2>&1 \
-            || { echo "ABORT: $p is not installed in rootfs.img" >&2; exit 1; }
+        # debugfs exits 0 even when the file does not exist -- it prints
+        # "File not found by ext2_lookup" to stderr and carries on. Asserting on
+        # its exit code silently passes for a package that never installed, so
+        # assert on the OUTPUT: a real stat always begins a line with "Inode:".
+        if ! debugfs -R "stat /var/lib/dpkg/info/$p.list" "$STAGE/rootfs.img" 2>&1 \
+             | grep -q '^Inode:'; then
+            echo "ABORT: $p is not installed in rootfs.img" >&2
+            exit 1
+        fi
     done
     say "adaptation packages verified present in rootfs.img"
 fi
 ```
+
+- [ ] **Step 2b: Prove the assert can actually fail**
+
+A check that cannot fail is not a check. Confirm the `grep '^Inode:'` form
+rejects an absent package, which the exit-code form did not:
+
+```bash
+debugfs -R "stat /var/lib/dpkg/info/no-such-package.list" \
+    droidian/stage/rootfs.img 2>&1 | grep -c '^Inode:'
+```
+
+Expected: `0`. If this prints non-zero, the assert is still blind.
 
 - [ ] **Step 3: Build with the packages**
 
@@ -1098,30 +1117,50 @@ ADAPTATION=0 packs a stock image for comparison."
 # could silently do the wrong thing.
 #
 #   ./droidian/verify-device.sh
+#
+# Every value is LABELLED at the source and looked up by label. An earlier
+# draft indexed the remote output by line number, which was wrong twice over:
+# it read the wrong line, and a single missing /dev node shifts every line
+# after it, so the checks would silently start testing the wrong values.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSH="$(dirname "$HERE")/.venv/bin/python $HERE/ssh.py"
 fail=0
 ck() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
 
-out=$($SSH -r 'systemctl is-active phosh; echo ---
-stat -c "%a %U:%G" /dev/hwbinder /dev/kgsl-3d0 /dev/diag /dev/input/event0; echo ---
-journalctl -b --no-pager | grep -c "GL renderer: Adreno" ; echo ---
-dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita 2>/dev/null | grep -c "^ii"; echo ---
-dpkg-divert --list | grep -c plugins-disabled/libgstcamerabin' 2>/dev/null)
+out=$($SSH -r '
+echo "phosh=$(systemctl is-active phosh)"
+echo "restarts=$(systemctl show -p NRestarts --value phosh)"
+for n in /dev/hwbinder /dev/kgsl-3d0 /dev/diag /dev/input/event0; do
+    echo "node $n $(stat -c "%a %U:%G" "$n" 2>/dev/null || echo MISSING)"
+done
+echo "gl=$(journalctl -b --no-pager | grep -c "GL renderer: Adreno")"
+echo "pkgs=$(dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita 2>/dev/null | grep -c "^ii")"
+echo "divert=$(dpkg-divert --list | grep -c plugins-disabled/libgstcamerabin)"
+echo "camerr=$(journalctl -b --no-pager | grep -c "CameraBin error")"
+' 2>/dev/null)
 
 echo "$out"
-ck "phosh active"                 "grep -q '^active' <<<\"\$out\""
-ck "hwbinder widened"             "grep -q '666 root:root' <<<\"\$out\""
-ck "kgsl widened"                 "grep -q '666 system:system' <<<\"\$out\""
-ck "diag STILL denied"            "grep -q '600 root:root' <<<\"\$out\""
-ck "input STILL android_input"    "grep -q 'root:android_input' <<<\"\$out\""
-ck "hardware GL (not pixman)"     "grep -qx '[1-9][0-9]*' <<<\"\$(sed -n '7p' <<<\"\$out\")\""
-ck "3 adaptation packages"        "grep -qx '3' <<<\"\$out\""
-ck "camerabin diverted"           "grep -qx '1' <<<\"\$out\""
+# A node that is MISSING fails its check rather than being skipped.
+node() { grep "^node $1 " <<<"$out" | cut -d" " -f3-; }
+val()  { grep "^$1=" <<<"$out" | cut -d= -f2-; }
+
+ck "phosh active"                 '[ "$(val phosh)" = active ]'
+ck "hwbinder widened"             '[ "$(node /dev/hwbinder)" = "666 root:root" ]'
+ck "kgsl widened"                 '[ "$(node /dev/kgsl-3d0)" = "666 system:system" ]'
+ck "diag STILL denied"            '[ "$(node /dev/diag)" = "600 root:root" ]'
+ck "input STILL android_input"    '[[ "$(node /dev/input/event0)" == *:android_input ]]'
+ck "hardware GL (not pixman)"     '[ "$(val gl)" -gt 0 ]'
+ck "3 adaptation packages"        '[ "$(val pkgs)" = 3 ]'
+ck "camerabin diverted"           '[ "$(val divert)" = 1 ]'
+ck "no CameraBin error"           '[ "$(val camerr)" = 0 ]'
 [ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit $fail
 ```
+
+`val` and `node` return empty for anything the device did not report, and
+every check compares against an exact expected string, so a missing value
+fails rather than accidentally matching.
 
 - [ ] **Step 2: Flash and verify**
 
