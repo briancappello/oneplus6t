@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fake fastboot. Records its arguments and never touches a device.
+#
+# The suite puts this directory first on PATH, so production code that calls
+# `fastboot` by name cannot reach a real phone from a test even if it forgets
+# a flag. Safety is a property of the environment here, not of a branch inside
+# provision.sh that someone must remember to write.
+printf 'fastboot %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+
+case "$1" in
+    getvar)
+        # Enough shape for the probe parser; a real device prints to stderr.
+        case "$2" in
+            current-slot) echo "current-slot: ${FAKE_SLOT:-a}" >&2 ;;
+            all)          echo "(bootloader) partition-type:boot:raw" >&2 ;;
+        esac
+        ;;
+esac
+exit "${FAKE_FASTBOOT_RC:-0}"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fake edl. Records its arguments and never repartitions anything.
+#
+# The real tool writes the GPT. It was previously reachable from the suite by
+# absolute path, which meant one stray fixture file stood between `run-tests.sh`
+# and repartitioning whatever phone was plugged in.
+printf 'edl %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+exit "${FAKE_EDL_RC:-0}"

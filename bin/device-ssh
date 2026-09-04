@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# device-ssh — run a command on the phone over the USB network.
+#
+# A thin wrapper so callers name a command instead of hardcoding an interpreter
+# path. That is what lets the test suite shadow it on PATH; nothing in the
+# provisioning scripts needs to know whether it is under test.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$HERE/.venv/bin/python" "$HERE/droidian/ssh.py" "$@"

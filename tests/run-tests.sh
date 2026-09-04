@@ -8,6 +8,15 @@ ROOT="$(dirname "$HERE")"
 BUILD="$ROOT/build.sh"
 pass=0; fail=0
 
+# No test may reach a real phone. Fake fastboot/edl/device-ssh shadow the real
+# ones for every child process, so this is a property of the environment rather
+# than a flag each test has to remember. Whether a device is attached and ready
+# is a readiness question, answered by ./check-device.sh, never by this suite.
+export PATH="$HERE/fixtures/bin:$PATH"
+export HW_LOG=/tmp/hw-log.$$
+: > "$HW_LOG"
+trap 'rm -f "$HW_LOG"' EXIT
+
 expect_contains() {   # expect_contains <name> <file> <string>
     if grep -qF -- "$3" "$2" 2>/dev/null; then
         echo "  PASS  $1"; pass=$((pass+1))
@@ -142,24 +151,58 @@ fi
 
 rm -f /tmp/pr-boot-match.$$ /tmp/pr-boot-diff.$$ /tmp/pr-data-match.$$ /tmp/pr-data-diff.$$
 
+# Flash phases: boot phase flashes boot and vbmeta
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n' > /tmp/pr-flash-boot.$$
+mkdir -p /tmp/artifacts-test/droidian/out/images
+touch /tmp/artifacts-test/droidian/out/images/boot.img
+touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
+timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-boot.$$ --phase boot > /tmp/p-flash-boot.$$ 2>&1; rc=$?
+expect_rc "boot phase exits 0" 0 "$rc"
+expect_contains "boot phase flashes boot" /tmp/p-flash-boot.$$ 'boot: flashing'
+rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
+
+# Flash phases: data phase flashes userdata
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-flash-data.$$
+mkdir -p /tmp/artifacts-test/droidian
+touch /tmp/artifacts-test/droidian/userdata.img
+timeout 10 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
+expect_rc "data phase exits 0" 0 "$rc"
+expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: installing rootfs'
+rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
+
 # --artifacts mode accepts a path and runs all phases
-"$PROV" --artifacts /tmp/nonexistent --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-ok.$$
+mkdir -p /tmp/artifacts-test/droidian/out/images
+touch /tmp/artifacts-test/droidian/out/images/boot.img
+touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
+touch /tmp/artifacts-test/droidian/userdata.img
+: > "$HW_LOG"
+FAKE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" \
+timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
 expect_rc "--artifacts mode exits 0" 0 "$rc"
-expect_contains "--artifacts echoes the path" /tmp/p-art.$$ '/tmp/nonexistent'
+# rc=124 would mean a phase blocked waiting for a device. Bounded so that a
+# regression fails the suite instead of hanging it.
+expect_contains "the boot flash names the slot" "$HW_LOG" 'fastboot flash boot_a'
+expect_contains "the userdata flash is issued" "$HW_LOG" 'fastboot flash userdata'
+expect_contains "--artifacts echoes the path" /tmp/p-art.$$ '/tmp/artifacts-test'
 expect_contains "edl phase runs" /tmp/p-art.$$ 'edl:'
 expect_contains "boot phase runs" /tmp/p-art.$$ 'boot:'
 expect_contains "data phase runs" /tmp/p-art.$$ 'data:'
 expect_contains "activate phase runs" /tmp/p-art.$$ 'activate:'
 expect_contains "verify phase runs" /tmp/p-art.$$ 'verify:'
-rm -f /tmp/p-art.$$
+rm -rf /tmp/artifacts-test /tmp/p-art.$$
 
 # --phase flag runs only that phase
-"$PROV" --artifacts /tmp/nonexistent --probe-file /tmp/pr-ok.$$ --phase boot > /tmp/p-phase.$$ 2>&1; rc=$?
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n' > /tmp/pr-phase.$$
+mkdir -p /tmp/artifacts-test/droidian/out/images
+touch /tmp/artifacts-test/droidian/out/images/boot.img
+touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
+timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-phase.$$ --phase boot > /tmp/p-phase.$$ 2>&1; rc=$?
 expect_rc "--phase boot exits 0" 0 "$rc"
 expect_contains "only boot phase runs" /tmp/p-phase.$$ 'boot:'
 expect_absent "edl phase is skipped" /tmp/p-phase.$$ 'edl:'
 expect_absent "data phase is skipped" /tmp/p-phase.$$ 'data:'
-rm -f /tmp/p-phase.$$
+rm -rf /tmp/artifacts-test /tmp/pr-phase.$$ /tmp/p-phase.$$
 
 echo
 echo ">>> lib/probe.sh tests"

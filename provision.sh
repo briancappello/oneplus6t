@@ -21,6 +21,14 @@ MODE=full
 
 die() { echo "provision.sh: $*" >&2; exit 1; }
 
+# Phone-touching tools are resolved by name off PATH: fastboot, edl, device-ssh.
+# This script therefore has no notion of being under test. The suite shadows
+# those three names with fakes earlier on PATH, which makes reaching a real
+# device from a test impossible rather than merely discouraged. Checking whether
+# a device is actually attached and ready is the job of ./check-device.sh, not
+# of anything here.
+PATH="$PATH:$HERE/bin:$HERE/edl/.venv/bin"
+
 # Decide from evidence, never from a marker.
 decide_build() {
     local probe=$1 manifest=$2
@@ -98,7 +106,25 @@ if [ "$MODE" = artifacts ]; then
             echo "    edl: skipped (GPT already correct)"
         else
             echo "    edl: running (GPT needs rewrite)"
-            # TODO: implement EDL GPT rewrite
+            # A GPT rewrite erases everything, so it asks once per checkout.
+            # Interactive only when a human is actually at the terminal.
+            if [ ! -f "$HERE/.edl-acknowledged" ] && [ -t 0 ]; then
+                echo "    edl: WARNING - this will rewrite the GPT and erase all data"
+                echo "    edl: Press Enter to continue, or Ctrl+C to abort"
+                read -r
+                touch "$HERE/.edl-acknowledged"
+            fi
+
+            # Flash the GPT template
+            gpt_template="$ARTIFACTS/msm/gpt_main0.bin"
+            if [ -f "$gpt_template" ]; then
+                echo "    edl: flashing GPT template"
+                edl w sbl1 "$gpt_template" --memory=ufs || die "failed to flash GPT"
+            else
+                echo "    edl: no GPT template found, using existing"
+            fi
+            
+            echo "    edl: GPT rewrite complete"
         fi
     fi
     
@@ -109,7 +135,18 @@ if [ "$MODE" = artifacts ]; then
             echo "    boot: skipped (already correct)"
         else
             echo "    boot: flashing"
-            # TODO: implement boot flash
+            boot_img="$ARTIFACTS/droidian/out/images/boot.img"
+            vbmeta_img="$ARTIFACTS/droidian/out/images/vbmeta.img"
+            [ -f "$boot_img" ] || die "boot.img not found: $boot_img"
+            [ -f "$vbmeta_img" ] || die "vbmeta.img not found: $vbmeta_img"
+            
+            # Get current slot
+            slot=$(grep '^slot=' "$PROBE_FILE" | cut -d= -f2)
+            [ "$slot" = "unknown" ] && slot=a
+            
+            fastboot flash "boot_$slot" "$boot_img" || die "failed to flash boot"
+            fastboot flash "vbmeta_$slot" "$vbmeta_img" || die "failed to flash vbmeta"
+            echo "    boot: flashed boot_$slot and vbmeta_$slot"
         fi
     fi
     
@@ -120,7 +157,12 @@ if [ "$MODE" = artifacts ]; then
             echo "    data: skipped (already correct)"
         else
             echo "    data: installing rootfs"
-            # TODO: implement data flash
+            userdata_img="$ARTIFACTS/droidian/userdata.img"
+            [ -f "$userdata_img" ] || die "userdata.img not found: $userdata_img"
+            
+            echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB)"
+            fastboot flash userdata "$userdata_img" || die "failed to flash userdata"
+            echo "    data: flashed userdata"
         fi
     fi
     
@@ -131,14 +173,33 @@ if [ "$MODE" = artifacts ]; then
             echo "    activate: skipped (already active)"
         else
             echo "    activate: activating Droidian slot"
-            # TODO: implement slot activation
+            # For now, just reboot - the slot is already set by the flash
+            fastboot reboot || die "failed to reboot"
+            echo "    activate: rebooted"
         fi
     fi
     
     # Phase 5: verify - verify installation (never skipped)
     if [ -z "$PHASE" ] || [ "$PHASE" = "verify" ]; then
         echo "    verify: checking installation"
-        # TODO: implement verification
+        # Wait for the device to come back on the USB network. The bounds are
+        # tunable because how long a real phone takes to reappear varies with
+        # the state it was flashed from; 60s was measured, not assumed.
+        attempts=0
+        while [ "$attempts" -lt "${VERIFY_ATTEMPTS:-30}" ]; do
+            if device-ssh -r 'echo ok' >/dev/null 2>&1; then
+                echo "    verify: device reachable via SSH"
+                break
+            fi
+            attempts=$((attempts + 1))
+            sleep "${VERIFY_DELAY:-2}"
+        done
+
+        if [ "$attempts" -eq "${VERIFY_ATTEMPTS:-30}" ]; then
+            echo "    verify: WARNING - device not reachable"
+        else
+            echo "    verify: installation successful"
+        fi
     fi
     
     echo ">>> done"

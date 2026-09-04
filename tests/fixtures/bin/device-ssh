@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fake device-ssh. Answers from a fixture instead of reaching the phone.
+#
+# FAKE_SSH_FIXTURE names a file to emit; with no fixture this reports failure,
+# which is what an absent device looks like to the caller.
+printf 'device-ssh %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+[ -n "${FAKE_SSH_FIXTURE:-}" ] || exit 1
+cat "$FAKE_SSH_FIXTURE"
