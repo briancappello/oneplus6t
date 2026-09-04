@@ -168,6 +168,27 @@ else
     echo "  SKIP  udevadm verify not available"
 fi
 
+# ---------------------------------------------------------------- Task 6
+# The kernel version gate decides whether polkit gets fixed at all. Judging
+# 4.9 as "has pidfd" would leave authentication silently broken, which presents
+# as a rejected password. HOKC_HELPER points at a missing file so the script
+# stops right after the gate without needing root or dpkg-statoverride.
+APPLY="$ADAPT/halium-oldkernel-compat/usr/lib/halium-oldkernel-compat/apply"
+for c in "4.9-113-oneplus-fajita:fix" "5.0.9:fix" "5.1.0:skip" "6.1.0-13-arm64:skip"; do
+    kv=${c%%:*}; want=${c##*:}
+    got=$(HOKC_UNAME="echo $kv" HOKC_HELPER=/nonexistent "$APPLY" 2>&1)
+    ok=0
+    case "$want" in
+        fix)  case "$got" in *absent*)      ok=1 ;; esac ;;
+        skip) case "$got" in *"has pidfd"*) ok=1 ;; esac ;;
+    esac
+    if [ "$ok" = 1 ]; then
+        echo "  PASS  kernel $kv -> $want"; pass=$((pass+1))
+    else
+        echo "  FAIL  kernel $kv -> expected $want, got: $got"; fail=$((fail+1))
+    fi
+done
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

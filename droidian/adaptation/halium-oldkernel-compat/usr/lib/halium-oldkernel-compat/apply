@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# polkit-agent-helper.socket needs pidfd (Linux 5.1+). On older vendor kernels
+# the helper exits 1 before reading the password, so authentication always
+# fails and looks exactly like a wrong password. The helper's own error tells
+# you the fix: disable the socket and use the setuid helper.
+set -euo pipefail
+
+# Overridable so the version gate is testable offline. Getting this branch
+# wrong in the "has pidfd" direction leaves polkit quietly broken, which is
+# indistinguishable from a wrong password -- exactly the bug being fixed.
+HELPER="${HOKC_HELPER:-/usr/lib/polkit-1/polkit-agent-helper-1}"
+
+# shellcheck disable=SC2086
+kver=$(${HOKC_UNAME:-uname -r} | cut -d- -f1)
+major=${kver%%.*}; rest=${kver#*.}; minor=${rest%%.*}
+if [ "$major" -gt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 1 ]; }; then
+    echo "halium-oldkernel-compat: kernel $kver has pidfd; nothing to do"
+    exit 0
+fi
+
+[ -e "$HELPER" ] || { echo "halium-oldkernel-compat: $HELPER absent"; exit 0; }
+
+# dpkg-statoverride rather than a bare chmod u+s, so a polkitd upgrade cannot
+# silently drop the bit and resurrect the bug.
+if ! dpkg-statoverride --list "$HELPER" >/dev/null 2>&1; then
+    dpkg-statoverride --update --add root root 4755 "$HELPER"
+fi
+echo "halium-oldkernel-compat: $(stat -c '%A %U:%G' "$HELPER")"

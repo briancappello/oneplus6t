@@ -1,0 +1,12 @@
+[Unit]
+Description=polkit compatibility for kernels without pidfd
+Before=polkit.service
+ConditionPathExists=/usr/lib/polkit-1/polkit-agent-helper-1
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/halium-oldkernel-compat/apply
+
+[Install]
+WantedBy=multi-user.target

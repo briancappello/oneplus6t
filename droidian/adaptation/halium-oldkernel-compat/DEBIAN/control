@@ -1,0 +1,15 @@
+Package: halium-oldkernel-compat
+Version: 1.0.0
+Architecture: all
+Maintainer: oneplus6t <https://github.com/briancappello/oneplus6t>
+Depends: polkitd, dpkg
+Section: admin
+Priority: optional
+Description: Make polkit authenticate on kernels without pidfd
+ Droidian's polkitd runs its authentication helper as a socket-activated unit,
+ which requires pidfd. pidfd_open landed in Linux 5.1, so on a vendor kernel
+ older than that the helper exits before reading any password and every
+ authentication fails -- indistinguishable from a wrong password.
+ .
+ This masks the socket and makes the setuid helper available instead, which is
+ what the helper itself asks for. It is a no-op on kernels 5.1 and newer.

@@ -993,9 +993,13 @@ Description: Make polkit authenticate on kernels without pidfd
 # you the fix: disable the socket and use the setuid helper.
 set -euo pipefail
 
-HELPER=/usr/lib/polkit-1/polkit-agent-helper-1
+# Overridable so the version gate is testable offline. Getting this branch
+# wrong in the "has pidfd" direction leaves polkit quietly broken, which is
+# indistinguishable from a wrong password -- exactly the bug being fixed.
+HELPER="${HOKC_HELPER:-/usr/lib/polkit-1/polkit-agent-helper-1}"
 
-kver=$(uname -r | cut -d- -f1)
+# shellcheck disable=SC2086
+kver=$(${HOKC_UNAME:-uname -r} | cut -d- -f1)
 major=${kver%%.*}; rest=${kver#*.}; minor=${rest%%.*}
 if [ "$major" -gt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 1 ]; }; then
     echo "halium-oldkernel-compat: kernel $kver has pidfd; nothing to do"
@@ -1043,6 +1047,31 @@ ln -sf /usr/lib/systemd/system/halium-oldkernel-compat.service \
 chmod +x usr/lib/halium-oldkernel-compat/apply
 cd -
 ```
+
+- [ ] **Step 4b: Test the kernel version gate**
+
+Append to `run-tests.sh`. `HOKC_HELPER` points at a missing file so the script
+stops just after the gate, needing no root and no `dpkg-statoverride`:
+
+```bash
+APPLY="$ADAPT/halium-oldkernel-compat/usr/lib/halium-oldkernel-compat/apply"
+for c in "4.9-113-oneplus-fajita:fix" "5.0.9:fix" "5.1.0:skip" "6.1.0-13-arm64:skip"; do
+    kv=${c%%:*}; want=${c##*:}
+    got=$(HOKC_UNAME="echo $kv" HOKC_HELPER=/nonexistent "$APPLY" 2>&1)
+    ok=0
+    case "$want" in
+        fix)  case "$got" in *absent*)      ok=1 ;; esac ;;
+        skip) case "$got" in *"has pidfd"*) ok=1 ;; esac ;;
+    esac
+    if [ "$ok" = 1 ]; then
+        echo "  PASS  kernel $kv -> $want"; pass=$((pass+1))
+    else
+        echo "  FAIL  kernel $kv -> expected $want, got: $got"; fail=$((fail+1))
+    fi
+done
+```
+
+Expected: `passed=31 failed=0`.
 
 - [ ] **Step 5: Verify the mask symlink points at /dev/null**
 
