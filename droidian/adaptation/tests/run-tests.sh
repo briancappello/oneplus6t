@@ -228,7 +228,34 @@ expect_contains "no-op is reported"                     /tmp/cf-new.$$ 'already 
 : > "$cf_log"
 ACF_STAMP=/nonexistent ACF_NOW=100 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" "$CF" > /tmp/cf-nostamp.$$ 2>&1
 expect_absent "missing stamp never sets the clock" "$cf_log" 'SET '
-rm -f "$cf_stamp" "$cf_set" "$cf_log" "$cf_tk" /tmp/cf-old.$$ /tmp/cf-new.$$ /tmp/cf-nostamp.$$
+
+# RTC sync. busybox hwclock exits 0 even when RTC_SET_TIME fails, so the script
+# must judge by reading the RTC back, not by the exit code.
+cf_rtc=$(mktemp)
+cf_hw_noop=$(mktemp); printf '#!/bin/sh\nexit 0\n' > "$cf_hw_noop"; chmod +x "$cf_hw_noop"
+
+# RTC already correct -> no write attempted.
+echo 1900000000 > "$cf_rtc"
+ACF_STAMP="$cf_stamp" ACF_NOW=1900000000 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" \
+    ACF_RTC_EPOCH="$cf_rtc" ACF_HWCLOCK="$cf_hw_noop" "$CF" > /tmp/cf-rtcok.$$ 2>&1
+expect_contains "RTC in sync is left alone" /tmp/cf-rtcok.$$ 'RTC already within'
+
+# RTC far off and the write silently does nothing -> must be reported, not
+# mistaken for success just because hwclock exited 0.
+echo 100 > "$cf_rtc"
+ACF_STAMP="$cf_stamp" ACF_NOW=1900000000 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" \
+    ACF_RTC_EPOCH="$cf_rtc" ACF_HWCLOCK="$cf_hw_noop" "$CF" > /tmp/cf-rtcro.$$ 2>&1
+expect_contains "a lying hwclock exit code is not trusted" /tmp/cf-rtcro.$$ 'RTC is read-only'
+
+# A working hwclock updates the RTC -> success is reported.
+cf_hw_ok=$(mktemp); printf '#!/bin/sh\necho 1900000000 > %s\n' "$cf_rtc" > "$cf_hw_ok"; chmod +x "$cf_hw_ok"
+echo 100 > "$cf_rtc"
+ACF_STAMP="$cf_stamp" ACF_NOW=1900000000 ACF_SET_CMD="$cf_set" ACF_TIMEKEEPER="$cf_tk" \
+    ACF_RTC_EPOCH="$cf_rtc" ACF_HWCLOCK="$cf_hw_ok" "$CF" > /tmp/cf-rtcw.$$ 2>&1
+expect_contains "a writable RTC is updated" /tmp/cf-rtcw.$$ 'RTC updated'
+
+rm -f "$cf_stamp" "$cf_set" "$cf_log" "$cf_tk" "$cf_rtc" "$cf_hw_noop" "$cf_hw_ok" \
+      /tmp/cf-old.$$ /tmp/cf-new.$$ /tmp/cf-nostamp.$$ /tmp/cf-rtcok.$$ /tmp/cf-rtcro.$$ /tmp/cf-rtcw.$$
 
 echo
 echo "passed=$pass failed=$fail"

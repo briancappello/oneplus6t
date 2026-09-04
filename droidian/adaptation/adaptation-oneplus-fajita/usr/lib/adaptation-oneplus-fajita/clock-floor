@@ -46,3 +46,39 @@ if [ "$now" -lt "$floor" ]; then
 else
     echo "clock-floor: clock already at or past the floor ($now >= $floor)"
 fi
+
+# Push the good time into the RTC so the hardware carries it. With the
+# qcom,qpnp-rtc-write patch the driver registers .set_time and this sticks
+# across reboots on battery, which makes hctosys hand userspace a correct clock
+# with no offset file and no correction needed at all.
+#
+# On an unpatched kernel the write fails with RTC_SET_TIME: Invalid argument.
+# That is harmless -- timekeeper still carries the time -- so never fail here.
+sync_rtc() {
+    local sysnow rtcnow
+    sysnow="${ACF_NOW:-$(date +%s)}"
+    rtcnow=$(cat "${ACF_RTC_EPOCH:-/sys/class/rtc/rtc0/since_epoch}" 2>/dev/null) || return 0
+    [ -n "$rtcnow" ] || return 0
+
+    # Within a minute is close enough; writing on every boot buys nothing.
+    local drift=$(( sysnow - rtcnow ))
+    [ "$drift" -lt 0 ] && drift=$(( -drift ))
+    if [ "$drift" -le 60 ]; then
+        echo "clock-floor: RTC already within ${drift}s of system time"
+        return 0
+    fi
+
+    # busybox hwclock exits 0 even when RTC_SET_TIME fails, so the exit code
+    # proves nothing. Read the RTC back and compare.
+    ${ACF_HWCLOCK:-busybox hwclock} -w -u >/dev/null 2>&1 || true
+    rtcnow=$(cat "${ACF_RTC_EPOCH:-/sys/class/rtc/rtc0/since_epoch}" 2>/dev/null) || return 0
+    drift=$(( sysnow - rtcnow ))
+    [ "$drift" -lt 0 ] && drift=$(( -drift ))
+    if [ "$drift" -le 60 ]; then
+        echo "clock-floor: RTC updated, now within ${drift}s"
+    else
+        echo "clock-floor: RTC is read-only (needs the qcom,qpnp-rtc-write patch); timekeeper carries the time"
+    fi
+}
+
+sync_rtc
