@@ -67,18 +67,24 @@ expect_rc "unknown target fails" 1 "$rc"
 expect_contains "unknown target names itself" /tmp/b-bad.$$ 'nosuchtarget'
 rm -f /tmp/b-list.$$ /tmp/b-bad.$$
 
-rm -rf /tmp/b-out.$$ && mkdir -p /tmp/b-out.$$
-out=$(FAKE_BUILD="$ROOT/tests/fixtures/fake-target" FT_LOG=/tmp/b-log.$$ FT_RC=0 \
-      "$BUILD" rootfs 2>&1); rc=$?
-echo "$out" > /tmp/b-order.$$
+# Dependency order, checked as an order. The previous form passed a multi-line
+# string to grep -F, which matches any one of those lines, so it asserted a set
+# and would have held even if the order were reversed. It also named kernel,
+# which rootfs does not depend on, and left artifacts in the repo's own out/.
+rm -rf /tmp/b-out.$$ /tmp/b-log.$$
+out=$(OUT=/tmp/b-out.$$ FAKE_BUILD="$ROOT/tests/fixtures/fake-target" \
+      FT_LOG=/tmp/b-log.$$ FT_RC=0 "$BUILD" rootfs 2>&1); rc=$?
 expect_rc "rootfs builds" 0 "$rc"
-expect_contains "builds dependencies first" /tmp/b-order.$$ 'built: kernel
-built: camera
-built: adaptation
-built: rootfs'
-expect_contains "independent targets build in parallel" /tmp/b-order.$$ 'built: camera
-built: kernel'
-rm -f /tmp/b-order.$$ /tmp/b-log.$$
+python3 - /tmp/b-log.$$ > /tmp/b-ord.$$ 2>&1 <<'PY'
+import sys
+seen = [l.strip() for l in open(sys.argv[1]) if l.strip()]
+print("deps_first=" + str(all(d in seen and seen.index(d) < seen.index("rootfs")
+                              for d in ("camera", "adaptation"))))
+print("no_extras=" + str("kernel" not in seen))
+PY
+expect_contains "dependencies build before their dependent" /tmp/b-ord.$$ 'deps_first=True'
+expect_contains "only the requested subgraph builds"        /tmp/b-ord.$$ 'no_extras=True'
+rm -rf /tmp/b-out.$$ /tmp/b-log.$$ /tmp/b-ord.$$
 
 rm -rf /tmp/b-mout.$$ && mkdir -p /tmp/b-mout.$$
 out=$(OUT=/tmp/b-mout.$$ FAKE_BUILD="$ROOT/tests/fixtures/fake-target" FT_LOG=/tmp/b-log.$$ FT_RC=0 \
