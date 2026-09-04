@@ -37,6 +37,35 @@ expect_rc() {   # expect_rc <name> <expected> <actual>
 echo ">>> build.sh tests"
 # Task 2+ append their cases below this line.
 
+out=$("$BUILD" --list 2>&1); rc=$?
+echo "$out" > /tmp/b-list.$$
+expect_rc "--list exits 0" 0 "$rc"
+expect_contains "lists kernel"     /tmp/b-list.$$ 'kernel'
+expect_contains "lists camera"     /tmp/b-list.$$ 'camera'
+expect_contains "lists adaptation" /tmp/b-list.$$ 'adaptation'
+expect_contains "lists rootfs"     /tmp/b-list.$$ 'rootfs'
+expect_contains "shows the rootfs dependency" /tmp/b-list.$$ 'camera adaptation'
+expect_contains "shows an output path" /tmp/b-list.$$ 'droidian/userdata.img'
+
+out=$("$BUILD" nosuchtarget 2>&1); rc=$?
+echo "$out" > /tmp/b-bad.$$
+expect_rc "unknown target fails" 1 "$rc"
+expect_contains "unknown target names itself" /tmp/b-bad.$$ 'nosuchtarget'
+rm -f /tmp/b-list.$$ /tmp/b-bad.$$
+
+rm -rf /tmp/b-out.$$ && mkdir -p /tmp/b-out.$$
+out=$(FAKE_BUILD="$ROOT/tests/fixtures/fake-target" FT_LOG=/tmp/b-log.$$ FT_RC=0 \
+      "$BUILD" rootfs 2>&1); rc=$?
+echo "$out" > /tmp/b-order.$$
+expect_rc "rootfs builds" 0 "$rc"
+expect_contains "builds dependencies first" /tmp/b-order.$$ 'built: kernel
+built: camera
+built: adaptation
+built: rootfs'
+expect_contains "independent targets build in parallel" /tmp/b-order.$$ 'built: camera
+built: kernel'
+rm -f /tmp/b-order.$$ /tmp/b-log.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
