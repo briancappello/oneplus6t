@@ -1468,96 +1468,46 @@ ADAPTATION=0 packs a stock image for comparison."
 - Consumes: a flashed device.
 - Produces: the assertion suite reused later as `provision.sh`'s `verify` phase.
 
-- [ ] **Step 1: Write the verifier**
+- [x] **Step 1: Write the verifier**
 
-```bash
-#!/usr/bin/env bash
-#
-# Assert the device is actually fixed. Checks user-visible outcomes, not that
-# files exist, and asserts the NEGATIVE cases too -- the two ways this design
-# could silently do the wrong thing.
-#
-#   ./droidian/verify-device.sh
-#
-# Every value is LABELLED at the source and looked up by label. An earlier
-# draft indexed the remote output by line number, which was wrong twice over:
-# it read the wrong line, and a single missing /dev node shifts every line
-# after it, so the checks would silently start testing the wrong values.
-set -uo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SSH="$(dirname "$HERE")/.venv/bin/python $HERE/ssh.py"
-fail=0
-ck() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
+Shipped as `droidian/verify-device.sh`. Every value is LABELLED at the source
+and looked up by label rather than by line number, and the journal greps drop
+`sudo[` lines first -- sudo logs the full command it runs, so a grep for a
+string that appears in the script matches its own invocation and inflates every
+count by one. That produced a phantom `CameraBin error` on the first run.
 
-out=$($SSH -r '
-echo "phosh=$(systemctl is-active phosh)"
-echo "restarts=$(systemctl show -p NRestarts --value phosh)"
-for n in /dev/hwbinder /dev/kgsl-3d0 /dev/diag /dev/input/event0; do
-    echo "node $n $(stat -c "%a %U:%G" "$n" 2>/dev/null || echo MISSING)"
-done
-echo "gl=$(journalctl -b --no-pager | grep -c "GL renderer: Adreno")"
-echo "pkgs=$(dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita 2>/dev/null | grep -c "^ii")"
-echo "divert=$(dpkg-divert --list | grep -c plugins-disabled/libgstcamerabin)"
-echo "camerr=$(journalctl -b --no-pager | grep -c "CameraBin error")"
-' 2>/dev/null)
+Two assertions from the original draft were wrong and were replaced:
 
-echo "$out"
-# A node that is MISSING fails its check rather than being skipped.
-node() { grep "^node $1 " <<<"$out" | cut -d" " -f3-; }
-val()  { grep "^$1=" <<<"$out" | cut -d= -f2-; }
+- **`/dev/diag` is `600 root:root`.** It is `660 system:root` on a stock boot;
+  `600 root:root` was an incidental value from a stale rootfs. The invariant is
+  *reachability*, so assert that `droidian` can neither read nor write it, and
+  that no rule was emitted for it. Both hold.
+- **All four core nodes appear in our ruleset.** Which nodes need our help
+  legitimately varies: the kgsl driver creates `/dev/kgsl-3d0` and `/dev/ion`
+  already at their ueventd.rc values on some boots, and skipping an
+  already-correct node is the design working. The outcome checks cover it.
 
-ck "phosh active"                 '[ "$(val phosh)" = active ]'
-ck "hwbinder widened"             '[ "$(node /dev/hwbinder)" = "666 root:root" ]'
-ck "kgsl widened"                 '[ "$(node /dev/kgsl-3d0)" = "666 system:system" ]'
-ck "diag STILL denied"            '[ "$(node /dev/diag)" = "600 root:root" ]'
-ck "input STILL android_input"    '[[ "$(node /dev/input/event0)" == *:android_input ]]'
-ck "hardware GL (not pixman)"     '[ "$(val gl)" -gt 0 ]'
-ck "3 adaptation packages"        '[ "$(val pkgs)" = 3 ]'
-ck "camerabin diverted"           '[ "$(val divert)" = 1 ]'
-ck "no CameraBin error"           '[ "$(val camerr)" = 0 ]'
-[ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
-exit $fail
-```
+- [x] **Step 2: Flash and verify**
 
-`val` and `node` return empty for anything the device did not report, and
-every check compares against an exact expected string, so a missing value
-fails rather than accidentally matching.
+`ALL PASS`, 14 checks, after a fresh flash with no manual step.
 
-- [ ] **Step 2: Flash and verify**
+- [x] **Step 3: Prove durability**
 
-```bash
-./droidian/flash.sh
-# wait for boot, then
-./droidian/verify-device.sh
-```
+Full cycle run twice — `build-adaptation.sh`, `build-rootfs.sh`, `flash.sh` —
+then rebooted twice more. Boots 2 and 3 both `ALL PASS` with no intervention.
 
-Expected: `ALL PASS`. The two `STILL` assertions are the important ones — they
-prove the deny default held and that we did not revert a working convention.
+**Erosion, found here and fixed.** The ruleset was self-eroding: written to
+`/etc`, applied by udev before the unit runs, so its own nodes read as already
+reachable and dropped out. Measured 52 rules to 42 across one reboot, losing
+`hwbinder` and `vndbinder`. Rules now live in `/run/udev/rules.d` (tmpfs), so
+each boot measures a pristine `/dev`. Stable at 48 rules with both nodes present
+across three boots.
 
-- [ ] **Step 3: Prove durability, which is the whole point**
-
-```bash
-./droidian/build-rootfs.sh && ./droidian/flash.sh
-# wait for boot
-./droidian/verify-device.sh
-```
-
-Expected: `ALL PASS` again, with **no manual step in between**. If this needs
-any `ssh` fix-up, the invariant is broken and the offending fix must be moved
-into a package.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add droidian/verify-device.sh
-git commit -m "test(droidian): assert the device fixes survive a reinstall
-
-Checks user-visible outcomes and the negative cases: /dev/diag must still be
-denied and /dev/input must still be root:android_input, proving the deny
-default and the reachability invariant both held."
-```
-
----
+**First-boot phosh race, pre-existing.** On the first boot after a flash, phosh
+can fail `start-post` with a 30 s timeout while `lxc.service` is still starting
+the container and the two `runonce@` services are running. `phoc` never logs.
+It recovers on the next boot and is unrelated to these packages — our unit
+finishes in 7.1 s, well before phosh starts.
 
 ## Done when
 
