@@ -81,6 +81,11 @@ except:
     pass
 ")
     
+    # No readable package evidence is not permission to skip. An empty list
+    # would otherwise fall straight through the loop below and return "skip",
+    # which is how a missing manifest could silently cancel a rootfs install.
+    [ -n "$pkg_names" ] || return 1
+
     # Check each package version against probe
     for pkg in $pkg_names; do
         local manifest_ver probe_ver
