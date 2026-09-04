@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Emit udev rules that restore the device's own ueventd.rc policy on the HOST
+# /dev, for nodes the session user cannot otherwise reach.
+#
+# The Android container gets a private tmpfs /dev (lxc.autodev=0), so ueventd
+# applies these modes only inside the container. The host /dev is devtmpfs
+# driven by udev, and lxc-android's 65-android.rules covers binder but not the
+# API-28 HIDL nodes or the GPU.
+#
+# The node set is COMPUTED, never hand-listed:
+#     { declared in ueventd.rc } n { unreachable by the session user } \ { denied }
+#
+# The middle term is the safety invariant. Applying Android's declarations
+# wholesale would break the device: the host has /dev/input/event* as
+# root:android_input where ueventd.rc says root:input, and /dev/dri/card0 as
+# root:video where ueventd.rc says root:graphics. Touch and display work
+# BECAUSE of the host values. Never widen what is already reachable.
+#
+# Writes to stdout. Environment overrides exist so this is testable offline.
+set -uo pipefail
+
+UEVENTD_FILES="${HHP_UEVENTD_FILES:-/android/vendor/ueventd.rc /android/ueventd.rc}"
+TARGET_USER="${HHP_TARGET_USER:-droidian}"
+
+# ueventd.rc declares many nodes as globs -- 33 of 264 on fajita, including
+# /dev/input/* and /dev/dri/*, the two the reachability invariant exists to
+# protect. Expansion is a seam so the offline tests can be hermetic: the real
+# expander globs against the device's own /dev, which is correct at boot but
+# would make a test depend on whichever machine ran it.
+expand() {
+    if [ -n "${HHP_EXPAND_CMD:-}" ]; then
+        eval "${HHP_EXPAND_CMD//\$1/$1}"
+        return 0
+    fi
+    local n
+    for n in $1; do [ -e "$n" ] && printf '%s\n' "$n"; done
+    return 0
+}
+
+reachable() {
+    if [ -n "${HHP_REACH_CMD:-}" ]; then
+        eval "${HHP_REACH_CMD//\$1/$1}"
+        return
+    fi
+    runuser -u "$TARGET_USER" -- test -r "$1" 2>/dev/null &&
+    runuser -u "$TARGET_USER" -- test -w "$1" 2>/dev/null
+}
+
+denied() { return 1; }   # replaced in Task 3
+
+declared=0
+printf '# Generated from the device'"'"'s own ueventd.rc - do not hand-edit.\n'
+printf '#\n'
+printf '# Set = declared in ueventd.rc, unreachable by %s, not denied by policy.\n' "$TARGET_USER"
+printf '# Nodes already reachable are deliberately left alone: reverting them to\n'
+printf '# Android'"'"'s values would break working touch and display.\n'
+
+emitted=""
+for f in $UEVENTD_FILES; do
+    [ -r "$f" ] || continue
+    while read -r path mode uid gid _rest; do
+        case "$path" in /dev/*) ;; *) continue ;; esac
+        while read -r node; do
+            [ -n "$node" ] || continue
+            declared=$((declared + 1))
+            # First declaration wins. The vendor file is read first and
+            # /dev/diag is declared in both, with different owners.
+            case " $emitted " in *" $node "*) continue ;; esac
+            reachable "$node" && continue
+            denied "$node" && continue
+            emitted="$emitted $node"
+            # udev matches KERNEL against the SYSNAME, not the path under /dev.
+            # /dev/dri/card0 has sysname "card0", so stripping only the "/dev/"
+            # prefix would emit KERNEL=="dri/card0", which matches nothing and
+            # fails silently -- the exact failure mode this design forbids.
+            printf '\n# ueventd.rc: %s %s %s %s\n' "$path" "$mode" "$uid" "$gid"
+            printf 'ACTION=="add", KERNEL=="%s", OWNER="%s", GROUP="%s", MODE="%s"\n' \
+                   "${node##*/}" "$uid" "$gid" "$mode"
+        done < <(expand "$path")
+    done < "$f"
+done
+
+if [ "$declared" -eq 0 ]; then
+    echo "halium-hostdev-perms: no /dev declarations found in: $UEVENTD_FILES" >&2
+    echo "halium-hostdev-perms: refusing to emit an empty ruleset" >&2
+    exit 1
+fi

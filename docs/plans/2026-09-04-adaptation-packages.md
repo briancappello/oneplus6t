@@ -429,7 +429,7 @@ chmod +x droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/g
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=11 failed=0`.
+Expected: `passed=12 failed=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -547,7 +547,7 @@ denied() {
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=17 failed=0`.
+Expected: `passed=18 failed=0`.
 
 - [ ] **Step 6: Commit**
 
