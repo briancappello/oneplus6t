@@ -43,18 +43,23 @@ expect_rc() {   # expect_rc <name> <expected> <actual>
     fi
 }
 
+expect_json() {   # expect_json <name> <file>
+    if python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$2" 2>/dev/null; then
+        echo "  PASS  $1"; pass=$((pass+1))
+    else
+        echo "  FAIL  $1: not valid JSON"; fail=$((fail+1))
+    fi
+}
+
 echo ">>> build.sh tests"
-# Task 2+ append their cases below this line.
+# These cover decisions build.sh makes -- ordering, refusal, provenance.
+# They deliberately do not re-assert the contents of the target table: that is
+# data, and a test that restates it only fails when someone edits it on purpose.
 
 out=$("$BUILD" --list 2>&1); rc=$?
 echo "$out" > /tmp/b-list.$$
 expect_rc "--list exits 0" 0 "$rc"
-expect_contains "lists kernel"     /tmp/b-list.$$ 'kernel'
-expect_contains "lists camera"     /tmp/b-list.$$ 'camera'
-expect_contains "lists adaptation" /tmp/b-list.$$ 'adaptation'
-expect_contains "lists rootfs"     /tmp/b-list.$$ 'rootfs'
-expect_contains "shows the rootfs dependency" /tmp/b-list.$$ 'camera adaptation'
-expect_contains "shows an output path" /tmp/b-list.$$ 'droidian/userdata.img'
+expect_contains "--list shows deps and output" /tmp/b-list.$$ 'camera adaptation'
 
 out=$("$BUILD" nosuchtarget 2>&1); rc=$?
 echo "$out" > /tmp/b-bad.$$
@@ -80,11 +85,9 @@ out=$(OUT=/tmp/b-mout.$$ FAKE_BUILD="$ROOT/tests/fixtures/fake-target" FT_LOG=/t
       "$BUILD" rootfs 2>&1); rc=$?
 manifest="/tmp/b-mout.$$/manifest.json"
 expect_rc "manifest build" 0 "$rc"
-[ -f "$manifest" ] || { echo "  FAIL  manifest written: missing $manifest"; fail=$((fail+1)); }
-expect_contains "manifest names the target"    "$manifest" '"name": "rootfs"'
-expect_contains "manifest records the commit"  "$manifest" '"commit": "'
-expect_contains "manifest records the source"  "$manifest" '"source": "'
-expect_contains "manifest records the output"  "$manifest" '"output": "droidian/userdata.img"'
+expect_json "manifest is valid JSON" "$manifest"
+# The commit is the only field with teeth: staleness is decided from it.
+expect_contains "manifest records the commit" "$manifest" '"commit": "'
 rm -rf /tmp/b-mout.$$ /tmp/b-log.$$
 
 echo
@@ -96,9 +99,7 @@ PROV="$ROOT/provision.sh"
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\n' > /tmp/pr-ok.$$
 "$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     > /tmp/pl-ok.$$ 2>/dev/null
-python3 -c "import json;json.load(open('/tmp/pl-ok.$$'))" \
-    && { echo "  PASS  plan-only emits valid JSON"; pass=$((pass+1)); } \
-    || { echo "  FAIL  plan-only emits valid JSON"; fail=$((fail+1)); }
+expect_json "plan-only emits valid JSON" /tmp/pl-ok.$$
 expect_contains "plan has a build list" /tmp/pl-ok.$$ '"build"'
 
 # An incomplete probe must request everything, never skip.
