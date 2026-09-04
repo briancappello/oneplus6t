@@ -143,7 +143,7 @@ Only two things, and `device.sh` prompts for both rather than failing:
 
 | Transition | Time |
 |---|---|
-| `droidian` → `fastboot` | ~120–180 s |
+| `droidian` → `fastboot` | ~285–295 s |
 | `droidian` → `edl` | ~70 s |
 | `fastboot` → `droidian` | ~30 s to USB, ~40 s to sshd |
 | `edl reset` → `droidian` | ~20 s |
@@ -295,9 +295,9 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 | Flash OxygenOS 9 | done (`RELEASE=oos9`), verified on hardware |
 | Flash postmarketOS | `flash-pmos.sh`, works, not yet integrated |
 | Droidian kernel | builds and boots — `droidian/build-kernel.sh` |
-| Droidian display | working (needs the adaptation package to survive reinstall) |
+| Droidian display | working, and now survives a reinstall |
 | Droidian camera | working — `droidian/build-camera.sh` fixes the focus mode |
-| Adaptation packages | designed, not built |
+| Adaptation packages | **built and verified on hardware** — `droidian/adaptation/` |
 | `build.sh` / `provision.sh` pipeline | designed, not built |
 | Flash LineageOS | not started |
 | Dual-boot Android + a self-built Linux | GPT layout done; `datapart=` mechanism verified, never applied |
@@ -436,6 +436,51 @@ its own Android toolchain and needs no arm64 library packages at all.
 The binfmt registration must have the **`F` flag** (`flags: PF`). Without it the
 kernel opens the interpreter from the calling process's mount namespace, so it
 is invisible inside a container. `check-env.sh` asserts this specifically.
+
+### Adaptation packages
+
+Three `.deb`s, built by `droidian/adaptation/build-adaptation.sh` and installed
+into `rootfs.img` by `build-rootfs.sh`, so every fix survives a reinstall:
+
+| Package | Scope |
+|---|---|
+| `halium-hostdev-perms` | any Halium device — derives host udev rules from the device's own `ueventd.rc` |
+| `halium-oldkernel-compat` | any kernel < 5.1 — makes polkit work without `pidfd` |
+| `adaptation-oneplus-fajita` | fajita glue; depends on the other two |
+
+`./droidian/verify-device.sh` asserts the user-visible outcome. It reports
+`ALL PASS` after a fresh flash with **no manual step**, verified across three
+boots.
+
+**The rules must live in `/run`, never `/etc`.** `generate-rules` computes
+"nodes the session user cannot reach". A ruleset persisted in `/etc` is applied
+by udev *before* the unit runs, so the nodes it fixed read as already reachable
+and get written out of the file — measured erosion from 52 rules to 42 across
+one reboot, dropping `hwbinder` and `vndbinder`, the two the display depends on.
+`/run/udev/rules.d` is tmpfs, so every boot measures a pristine `/dev`.
+
+**Android group names need translating.** 13 of the 19 groups named in this
+device's `ueventd.rc` do not exist under that name; `lxc-android` renames them
+with an `android_` prefix, and 11 resolve that way (`graphics` →
+`android_graphics`). udev *silently drops* a `GROUP=` it cannot resolve while
+still applying the mode and owner, so an unresolved name half-applies and
+reports nothing. Unresolvable names emit no rule at all and log the skip.
+
+**`KERNEL=` is a sysname, not a path.** `/dev/dri/card0` must be
+`KERNEL=="card0"`; `KERNEL=="dri/card0"` matches nothing and fails silently.
+
+**Installing into `rootfs.img` needs `/dev` bind-mounted.** The image contains a
+`/dev/null` character device, but FUSE mounts are `nodev`, so opening it returns
+EPERM and `droidian-camera`'s `postinst` fails on a `>/dev/null` redirect inside
+an `if` — where `set -e` does not trip, so dpkg still reports success and the
+package installs half-configured. Our three packages carry no maintainer scripts
+and need no emulation; `droidian-camera` is built with `dh`, ships
+`postinst`/`postrm`, and `dpkg --root` chroots to run them under qemu binfmt.
+
+**First boot after a flash can fail phosh.** `start-post` times out after 30 s
+while `lxc.service` is still starting the container and the `runonce@` services
+are running; `phoc` never logs. It recovers on the next boot. Unrelated to these
+packages — the adaptation unit finishes in ~7 s, long before phosh starts.
 
 ### Camera
 
