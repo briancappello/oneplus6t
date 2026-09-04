@@ -129,7 +129,15 @@ for f in $UEVENTD_FILES; do
             # First declaration wins. The vendor file is read first and
             # /dev/diag is declared in both, with different owners.
             case " $emitted " in *" $node "*) continue ;; esac
-            reachable "$node" && continue
+            # Log every disposition, not just the emitted ones. Without this the
+            # file is a list of decisions with no record of WHY a node is absent,
+            # and "absent because already reachable" is indistinguishable from
+            # "absent because it did not exist yet".
+            if reachable "$node"; then
+                printf 'halium-hostdev-perms: skip %s: already reachable (%s)\n' \
+                       "$node" "$(stat -c '%a %U:%G' "$node" 2>/dev/null || echo '?')" >&2
+                continue
+            fi
             denied "$node" && continue
             # A skipped declaration is NOT recorded as handled, so a later,
             # coarser declaration of the same node can still apply. /dev/diag is

@@ -3,7 +3,27 @@
 # than silently doing nothing -- silence is how this class of bug hid for a
 # whole debugging session.
 set -euo pipefail
-RULES=/etc/udev/rules.d/70-halium-hostdev-perms.rules
+
+# The rules go in /run, NOT /etc, and this is load-bearing.
+#
+# generate-rules computes "nodes the session user cannot reach". If a previous
+# boot's rules file persists, udev applies it before this unit runs, those nodes
+# become reachable, and the node set computes as EMPTY -- so the rules that made
+# them reachable get written out of the file. Measured: the file eroded from 52
+# rules to 42 across one reboot, dropping hwbinder, vndbinder, kgsl-3d0 and ion,
+# which are exactly the four the display depends on.
+#
+# /run/udev/rules.d is tmpfs and is a first-class udev rules directory, so every
+# boot starts from a pristine /dev and the measurement stays honest. This is the
+# same principle the rest of this repo follows: probe reality, never trust a
+# stored marker -- here the marker was corrupting the probe.
+RULES=/run/udev/rules.d/70-halium-hostdev-perms.rules
+STALE=/etc/udev/rules.d/70-halium-hostdev-perms.rules
+mkdir -p /run/udev/rules.d
+# Left behind by versions that wrote to /etc. It would shadow the /run copy,
+# since /etc outranks /run in udev's precedence, and re-introduce the erosion.
+rm -f "$STALE"
+
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
