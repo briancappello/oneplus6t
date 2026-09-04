@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake repartition-dualboot. Records the call and repartitions nothing.
+printf 'repartition-dualboot %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+exit "${FAKE_REPARTITION_RC:-0}"

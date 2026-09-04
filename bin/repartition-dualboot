@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# repartition-dualboot — write the dual-boot partition table, and nothing else.
+#
+# A thin wrapper over the verified GPT path in restore-android.py, exposed as a
+# command so callers name it instead of hardcoding an interpreter and a set of
+# environment variables. That is also what lets the test suite shadow it on
+# PATH; provision.sh needs no notion of being under test.
+#
+# The phone must already be in EDL (05c6:9008). This device rejects
+# `fastboot oem edl`, `oem enter-dload` and `reboot emergency`, so getting
+# there is a hands-on step: power off fully, hold Volume Up + Volume Down, then
+# plug in USB.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec env LAYOUT=dualboot PHASE=gpt python3 "$HERE/restore-android.py" "$@"

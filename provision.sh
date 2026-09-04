@@ -153,13 +153,20 @@ if [ "$MODE" = artifacts ]; then
     # Phase 1: edl (destructive) - rewrite the GPT
     if [ "$run_edl" = yes ]; then
         echo "    edl: running (GPT lacks linuxroot)"
-        gpt_template="$ARTIFACTS/msm/gpt_main0.bin"
-        if [ -f "$gpt_template" ]; then
-            echo "    edl: flashing GPT template"
-            edl w sbl1 "$gpt_template" --memory=ufs || die "failed to flash GPT"
-        else
-            echo "    edl: no GPT template found, using existing"
-        fi
+        # Delegate to restore-android.py, which owns the verified GPT path:
+        # it measures the real LUN size, completes the MSM template (which
+        # ships unfinished, with last_usable_lba=0 and a zero-length
+        # userdata), recomputes both CRC32s, writes the primary at sector 0
+        # and the backup at total-5, and byte-compares each write by reading
+        # it back.
+        #
+        # A partition table is not a partition. It lives at fixed sectors of
+        # the LUN, so it cannot be written through a name-addressed API: the
+        # previous code here ran `edl w sbl1 gpt_main0.bin`, which would have
+        # written the table into the secondary bootloader, from a template
+        # that contains no linuxroot and so could not have created one anyway.
+        echo "    edl: writing the dual-boot partition table"
+        repartition-dualboot || die "repartitioning failed"
         echo "    edl: GPT rewrite complete"
     elif wanted edl; then
         echo "    edl: skipped (not positively known to need repartitioning)"

@@ -363,7 +363,7 @@ expect_rc "an unconfirmed destructive run refuses" 1 "$rc"
 expect_contains "the refusal explains how to proceed" /tmp/p-des.$$ '--yes'
 expect_contains "the erase is spelled out before asking" /tmp/p-des.$$ 'ERASES EVERY PARTITION'
 # The point of the refusal: nothing was written.
-expect_absent "a refused run repartitions nothing" "$HW_LOG" 'edl w sbl1'
+expect_absent "a refused run repartitions nothing" "$HW_LOG" 'repartition-dualboot'
 expect_absent "a refused run flashes nothing"      "$HW_LOG" 'fastboot flash'
 
 : > "$HW_LOG"
@@ -373,7 +373,7 @@ VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
 timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-des.$$ \
     --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
 expect_rc "--yes proceeds without a terminal" 0 "$rc"
-expect_contains "the confirmed run repartitions" "$HW_LOG" 'edl w sbl1'
+expect_contains "the confirmed run repartitions" "$HW_LOG" 'repartition-dualboot'
 
 # A run with nothing destructive to do must not ask at all.
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=yes\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-quiet.$$

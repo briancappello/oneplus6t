@@ -13,12 +13,17 @@ Flags (environment variables, because edl's module runs docopt over sys.argv
 and would reject normal command-line options):
 
     SELFTEST=1   offline only: build the GPT and check it, touch no hardware
+    PHASE=gpt    write only the partition table, flash nothing
     PHASE=edl    run only the EDL stage
     PHASE=fb     run only the fastboot stage
     DRY=1        resolve and size-check every partition, write nothing
     FAST=1       skip the read-back SHA256 verification
     FORCE_GPT=1  rewrite the GPT even if the device already has a valid one
     START=n      resume the flash at the nth partition after an interruption
+    LAYOUT=dualboot
+                 split userdata 50/50 and add a linuxroot partition for a
+                 second OS. Nothing else moves, and Android needs no change
+                 because it mounts /data by name.
 
 Background: this exists because `edl qfil` destroys the LUN0 GPT on this
 device. The MSM .ops ships gpt_main0.bin as an unfinished template
@@ -419,7 +424,16 @@ def set_bcb(fire, opts, command, recovery=()):
 # phases
 # --------------------------------------------------------------------------
 
-def phase_edl():
+def phase_edl(gpt_only=False):
+    """Write the partition table, then flash the release image set.
+
+    gpt_only stops after the table is written and verified. Provisioning a
+    second OS needs the linuxroot partition created and nothing else touched:
+    reflashing the OOS image set over a working device would be both pointless
+    and destructive. The GPT work itself is identical either way, so it is
+    shared rather than reimplemented -- a hand-rolled second copy of this is
+    what wrote a partition table into the sbl1 partition.
+    """
     dry = os.environ.get("DRY") == "1"
     print("\n=== EDL phase ===")
     api = connect()
@@ -461,6 +475,11 @@ def phase_edl():
                 if rd(fire, 0, sec, len(blob) // SEC) != blob:
                     raise SystemExit(f"ABORT: GPT read-back at {sec} differs")
                 print(f"  wrote + verified {len(blob) // SEC} sectors @ {sec}")
+
+    if gpt_only:
+        print("\n  PHASE=gpt: partition table only, leaving every partition"
+              " as it is")
+        return
 
     print("\n[3/5] planning the flash")
     plan, missing = [], []
@@ -630,12 +649,22 @@ def main():
     if os.environ.get("SELFTEST") == "1":
         selftest()
         return
-    for path in (LOADER, GPT_TEMPLATE, IMG_DIR):
+    phase = os.environ.get("PHASE")
+    # Writing a partition table needs the loader and the template. It does not
+    # need the release image set, and demanding it would block repartitioning
+    # on a download that is never read.
+    required = [LOADER, GPT_TEMPLATE]
+    if phase != "gpt":
+        required.append(IMG_DIR)
+    for path in required:
         if not os.path.exists(path):
             raise SystemExit(f"ABORT: missing {path}")
 
-    phase = os.environ.get("PHASE")
-    if phase == "edl":
+    if phase == "gpt":
+        if not in_edl():
+            raise SystemExit("PHASE=gpt needs the phone in EDL (05c6:9008)")
+        phase_edl(gpt_only=True)
+    elif phase == "edl":
         phase_edl()
     elif phase == "fb":
         phase_fastboot()
