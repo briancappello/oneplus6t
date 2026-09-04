@@ -22,8 +22,75 @@ RELEASE=oos11 .venv/bin/python restore-android.py        # phone in EDL
 `check-env.sh` verifies every external tool the scripts need and prints the
 exact install command for anything missing, per distro. It installs nothing
 itself — all the remediations need root, and this repo does not take root.
-Run `./check-env.sh restore` or `./check-env.sh droidian` to check one
-workflow. Each entry in it was previously discovered as a mid-build failure.
+Each entry in it was previously discovered as a mid-build failure.
+
+## The pipeline
+
+The goal is one path that takes the phone from **any** state to dual-boot
+OxygenOS 9 + Droidian, skipping whatever is already correct. Three scripts,
+split by role:
+
+| Script | Runs on | Does | Status |
+|---|---|---|---|
+| `check-env.sh [build\|flash\|all]` | either | verifies host prerequisites | **works** |
+| `build.sh [--plan F \| targets…]` | worker | builds artifacts; never touches a phone | **planned** |
+| `provision.sh` | the machine with the phone | probes, decides, flashes, verifies | **planned** |
+
+> `build.sh` and `provision.sh` are **not written yet** — the design is in
+> [`docs/specs/2026-09-04-provisioning-pipeline-design.md`](docs/specs/2026-09-04-provisioning-pipeline-design.md).
+> Until they land, use the individual scripts: `droidian/build-kernel.sh`,
+> `droidian/build-rootfs.sh`, `droidian/build-camera.sh`, `droidian/flash.sh`
+> and `restore-android.py`. The usage below describes the intended interface.
+
+Building needs cores and a container runtime; flashing needs the phone. They
+are rarely the same machine, so the decision of *what to build* stays with the
+side that can see the device, and the building goes to the side with the CPU:
+
+```bash
+# on the machine with the phone
+./check-env.sh flash
+./provision.sh --plan-only > plan.json     # probes the device, decides
+
+# on the worker
+./check-env.sh build
+./build.sh --plan plan.json                # builds only what is missing
+
+# back on the machine with the phone
+./provision.sh --artifacts ./out
+```
+
+`plan.json` says *what needs building*, not what to flash, and it is small
+enough to move by any means. If the two machines can reach each other,
+`BUILD_HOST=worker ./provision.sh` collapses this into one command — but the
+split stays the primitive, so it works with no ssh trust between them.
+
+| Flag | Effect |
+|---|---|
+| `--plan-only` | probe and emit `plan.json`; touch nothing |
+| `--artifacts DIR` | flash using prebuilt artifacts from `DIR` |
+| `BUILD_HOST=host` | build remotely and fetch the results automatically |
+| `VERIFY=1` | compare by full sha256 instead of cheap fingerprints |
+| `PHASE=name` | run a single phase (`edl`, `boot`, `data`, `activate`, `verify`) |
+
+### Skipping is decided by probing, never by a marker
+
+Each phase reads real evidence from the device — build fingerprints, the GPT
+layout, `dpkg` versions inside the rootfs, the active slot — and skips itself
+if the outcome is already present. Nothing records "what we did last time":
+such a record silently lies the moment anything changes outside the pipeline,
+and this repo has already been bricked once by trusting a claim over reality
+(the MSM GPT template *said* it was valid; it was not). `VERIFY=1` upgrades
+every probe to a full hash comparison when you want certainty over speed.
+
+### Every fix is an artifact
+
+**No fix may live only on the running device.** Anything applied by hand over
+ssh is destroyed by the next reinstall, so every fix is packaged into an
+artifact instead — a `.deb`, a file baked into `rootfs.img`, or a flashing
+step. The `verify` phase asserts the user-visible outcome afterwards
+(hardware GL renderer, working polkit, camera on the aal path), so a fix that
+regresses because someone applied it manually is caught rather than
+rediscovered.
 
 | `RELEASE` | Build | Android |
 |---|---|---|
@@ -167,12 +234,16 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 
 | | Status |
 |---|---|
-| Restore stock OxygenOS 11 from EDL | done |
-| Flash OxygenOS 9 | done (`RELEASE=oos9`), not yet run on hardware |
+| Restore stock OxygenOS 11 from EDL | done, verified on hardware |
+| Flash OxygenOS 9 | done (`RELEASE=oos9`), verified on hardware |
 | Flash postmarketOS | `flash-pmos.sh`, works, not yet integrated |
-| Droidian kernel | builds — `droidian/build-kernel.sh`, not yet booted |
+| Droidian kernel | builds and boots — `droidian/build-kernel.sh` |
+| Droidian display | working (needs the adaptation package to survive reinstall) |
+| Droidian camera | working — `droidian/build-camera.sh` fixes the focus mode |
+| Adaptation packages | designed, not built |
+| `build.sh` / `provision.sh` pipeline | designed, not built |
 | Flash LineageOS | not started |
-| Dual-boot Android + a self-built Linux | GPT layout done, boot side not started |
+| Dual-boot Android + a self-built Linux | GPT layout done; `datapart=` mechanism verified, never applied |
 
 ## Dual-boot layout
 
