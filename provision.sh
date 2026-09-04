@@ -73,9 +73,35 @@ PY
 
 ARTIFACTS=""
 PHASE=""
+ASSUME_YES="${ASSUME_YES:-}"
+
+# confirm_destructive <line...> — name every irreversible step, then require an
+# explicit yes.
+#
+# Asked once, before anything is written, so the whole blast radius is visible
+# rather than revealed one prompt at a time. It fails closed: with no terminal
+# and no --yes it refuses rather than assuming consent, because the alternative
+# is a script erasing a phone because nobody was there to say no. The reply must
+# be the word YES, so a stray Enter cannot approve an erase.
+confirm_destructive() {
+    local line reply=""
+    echo
+    echo "  These steps write to the phone and cannot be undone:"
+    for line in "$@"; do echo "    - $line"; done
+    echo
+    if [ -n "$ASSUME_YES" ]; then
+        echo "  proceeding without asking (--yes given)"
+        return 0
+    fi
+    [ -t 0 ] || die "refusing to write to the phone without confirmation; pass --yes to proceed non-interactively"
+    printf '  Type YES to continue: '
+    read -r reply || true
+    [ "$reply" = YES ] || die "aborted: not confirmed"
+}
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --yes|-y)     ASSUME_YES=1; shift ;;
         --plan-only)  MODE=plan; shift ;;
         --artifacts)  shift; ARTIFACTS="${1:?--artifacts needs a path}"; MODE=artifacts; shift ;;
         --probe-file) shift; PROBE_FILE="${1:?--probe-file needs a path}"; shift ;;
@@ -97,86 +123,82 @@ if [ "$MODE" = plan ]; then
 fi
 
 if [ "$MODE" = artifacts ]; then
+    . "$HERE/lib/phases.sh"
     echo ">>> flashing from artifacts in $ARTIFACTS"
-    
-    # Phase 1: edl (destructive) - rewrite GPT if needed
-    if [ -z "$PHASE" ] || [ "$PHASE" = "edl" ]; then
-        . "$HERE/lib/phases.sh"
-        if skip_edl "$PROBE_FILE" "$MANIFEST"; then
-            echo "    edl: skipped (GPT already correct)"
-        else
-            echo "    edl: running (GPT needs rewrite)"
-            # A GPT rewrite erases everything, so it asks once per checkout.
-            # Interactive only when a human is actually at the terminal.
-            if [ ! -f "$HERE/.edl-acknowledged" ] && [ -t 0 ]; then
-                echo "    edl: WARNING - this will rewrite the GPT and erase all data"
-                echo "    edl: Press Enter to continue, or Ctrl+C to abort"
-                read -r
-                touch "$HERE/.edl-acknowledged"
-            fi
 
-            # Flash the GPT template
-            gpt_template="$ARTIFACTS/msm/gpt_main0.bin"
-            if [ -f "$gpt_template" ]; then
-                echo "    edl: flashing GPT template"
-                edl w sbl1 "$gpt_template" --memory=ufs || die "failed to flash GPT"
-            else
-                echo "    edl: no GPT template found, using existing"
-            fi
-            
-            echo "    edl: GPT rewrite complete"
-        fi
+    slot=$(grep '^slot=' "$PROBE_FILE" | cut -d= -f2)
+    [ -n "$slot" ] && [ "$slot" != "unknown" ] || slot=a
+
+    # Decide every phase before performing any of them. Deciding first is what
+    # lets the warning below state the whole blast radius up front, instead of
+    # a human discovering the third destructive step after approving two.
+    wanted() { [ -z "$PHASE" ] || [ "$PHASE" = "$1" ]; }
+    run_edl=no; run_boot=no; run_data=no; run_activate=no
+    if wanted edl      && ! skip_edl      "$PROBE_FILE" "$MANIFEST"; then run_edl=yes; fi
+    if wanted boot     && ! skip_boot     "$PROBE_FILE" "$MANIFEST"; then run_boot=yes; fi
+    if wanted data     && ! skip_data     "$PROBE_FILE" "$MANIFEST"; then run_data=yes; fi
+    if wanted activate && ! skip_activate "$PROBE_FILE" "$MANIFEST"; then run_activate=yes; fi
+
+    warn=()
+    [ "$run_edl" = yes ] && warn+=(
+        "edl   rewrites the partition table. This ERASES EVERY PARTITION, including Android and everything in internal storage. It is recoverable only by reflashing stock firmware, and an interruption can leave the phone unbootable.")
+    [ "$run_data" = yes ] && warn+=(
+        "data  overwrites the rootfs partition. Every file in the Droidian install, including anything you saved there, is replaced.")
+    [ "$run_boot" = yes ] && warn+=(
+        "boot  overwrites boot_$slot and vbmeta_$slot. The kernel currently on that slot is replaced.")
+    if [ "${#warn[@]}" -gt 0 ]; then
+        confirm_destructive "${warn[@]}"
     fi
-    
+
+    # Phase 1: edl (destructive) - rewrite the GPT
+    if [ "$run_edl" = yes ]; then
+        echo "    edl: running (GPT lacks linuxroot)"
+        gpt_template="$ARTIFACTS/msm/gpt_main0.bin"
+        if [ -f "$gpt_template" ]; then
+            echo "    edl: flashing GPT template"
+            edl w sbl1 "$gpt_template" --memory=ufs || die "failed to flash GPT"
+        else
+            echo "    edl: no GPT template found, using existing"
+        fi
+        echo "    edl: GPT rewrite complete"
+    elif wanted edl; then
+        echo "    edl: skipped (not positively known to need repartitioning)"
+    fi
+
     # Phase 2: boot - flash boot.img
-    if [ -z "$PHASE" ] || [ "$PHASE" = "boot" ]; then
-        . "$HERE/lib/phases.sh"
-        if skip_boot "$PROBE_FILE" "$MANIFEST"; then
-            echo "    boot: skipped (already correct)"
-        else
-            echo "    boot: flashing"
-            boot_img="$ARTIFACTS/droidian/out/images/boot.img"
-            vbmeta_img="$ARTIFACTS/droidian/out/images/vbmeta.img"
-            [ -f "$boot_img" ] || die "boot.img not found: $boot_img"
-            [ -f "$vbmeta_img" ] || die "vbmeta.img not found: $vbmeta_img"
-            
-            # Get current slot
-            slot=$(grep '^slot=' "$PROBE_FILE" | cut -d= -f2)
-            [ "$slot" = "unknown" ] && slot=a
-            
-            fastboot flash "boot_$slot" "$boot_img" || die "failed to flash boot"
-            fastboot flash "vbmeta_$slot" "$vbmeta_img" || die "failed to flash vbmeta"
-            echo "    boot: flashed boot_$slot and vbmeta_$slot"
-        fi
+    if [ "$run_boot" = yes ]; then
+        echo "    boot: flashing"
+        boot_img="$ARTIFACTS/droidian/out/images/boot.img"
+        vbmeta_img="$ARTIFACTS/droidian/out/images/vbmeta.img"
+        [ -f "$boot_img" ] || die "boot.img not found: $boot_img"
+        [ -f "$vbmeta_img" ] || die "vbmeta.img not found: $vbmeta_img"
+        fastboot flash "boot_$slot" "$boot_img" || die "failed to flash boot"
+        fastboot flash "vbmeta_$slot" "$vbmeta_img" || die "failed to flash vbmeta"
+        echo "    boot: flashed boot_$slot and vbmeta_$slot"
+    elif wanted boot; then
+        echo "    boot: skipped (already correct)"
     fi
-    
+
     # Phase 3: data - install rootfs (destructive)
-    if [ -z "$PHASE" ] || [ "$PHASE" = "data" ]; then
-        . "$HERE/lib/phases.sh"
-        if skip_data "$PROBE_FILE" "$MANIFEST"; then
-            echo "    data: skipped (already correct)"
-        else
-            echo "    data: installing rootfs"
-            userdata_img="$ARTIFACTS/droidian/userdata.img"
-            [ -f "$userdata_img" ] || die "userdata.img not found: $userdata_img"
-            
-            echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB)"
-            fastboot flash userdata "$userdata_img" || die "failed to flash userdata"
-            echo "    data: flashed userdata"
-        fi
+    if [ "$run_data" = yes ]; then
+        echo "    data: installing rootfs"
+        userdata_img="$ARTIFACTS/droidian/userdata.img"
+        [ -f "$userdata_img" ] || die "userdata.img not found: $userdata_img"
+        echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB)"
+        fastboot flash userdata "$userdata_img" || die "failed to flash userdata"
+        echo "    data: flashed userdata"
+    elif wanted data; then
+        echo "    data: skipped (already correct)"
     fi
-    
+
     # Phase 4: activate - activate Droidian slot
-    if [ -z "$PHASE" ] || [ "$PHASE" = "activate" ]; then
-        . "$HERE/lib/phases.sh"
-        if skip_activate "$PROBE_FILE" "$MANIFEST"; then
-            echo "    activate: skipped (already active)"
-        else
-            echo "    activate: activating Droidian slot"
-            # For now, just reboot - the slot is already set by the flash
-            fastboot reboot || die "failed to reboot"
-            echo "    activate: rebooted"
-        fi
+    if [ "$run_activate" = yes ]; then
+        echo "    activate: activating Droidian slot"
+        # For now, just reboot - the slot is already set by the flash
+        fastboot reboot || die "failed to reboot"
+        echo "    activate: rebooted"
+    elif wanted activate; then
+        echo "    activate: skipped (already active)"
     fi
     
     # Phase 5: verify - verify installation (never skipped)

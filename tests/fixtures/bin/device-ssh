@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Fake device-ssh. Answers from a fixture instead of reaching the phone.
 #
-# FAKE_SSH_FIXTURE names a file to emit; with no fixture this reports failure,
-# which is what an absent device looks like to the caller.
+# FAKE_SSH_OUT wins when set, for the short single-value replies (a sha256, a
+# partition listing). Otherwise FAKE_SSH_FIXTURE names a file to emit. With
+# neither, this reports failure, which is what an absent device looks like.
 printf 'device-ssh %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+
+if [ -n "${FAKE_SSH_OUT:-}" ]; then
+    printf '%s\n' "$FAKE_SSH_OUT"
+    exit 0
+fi
 [ -n "${FAKE_SSH_FIXTURE:-}" ] || exit 1
 cat "$FAKE_SSH_FIXTURE"

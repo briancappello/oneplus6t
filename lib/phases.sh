@@ -24,40 +24,61 @@ load_probe() {
     echo "${facts[@]}"
 }
 
-# Skip edl phase if vendor fingerprint is OOS9 and GPT already has linuxroot.
+# Skip the edl phase unless the GPT is positively known to lack linuxroot.
+#
+# The polarity here is the opposite of every other predicate, on purpose. edl
+# rewrites the partition table and erases the whole device. Running it when it
+# was not needed destroys everything; skipping it when it was needed costs a
+# rerun. So absent or unreadable evidence means skip, and only a device that
+# listed its partitions and did not have linuxroot may trigger the rewrite.
 skip_edl() {
-    local probe=$1 manifest=$2
-    # TODO: implement skip logic
-    return 1  # Don't skip for now
+    local probe=$1 manifest=$2 lr
+    lr=$(grep '^has_linuxroot=' "$probe" | cut -d= -f2)
+    [ "$lr" = no ] || return 0
+    return 1
 }
 
-# Skip boot phase if boot_<slot> sha256 matches the manifest.
+# device_boot_sha <slot> <bytes> — sha256 of the first <bytes> of the boot
+# partition. A boot partition is fixed size and the image in it is smaller, so
+# hashing the whole partition would never match the image; the byte count comes
+# from the manifest. Any failure prints nothing and returns non-zero, which the
+# caller must read as "unknown", never as "differs".
+device_boot_sha() {
+    local slot=$1 bytes=$2 out
+    case "$bytes" in ''|*[!0-9]*) return 1 ;; esac
+    out=$(device-ssh -r "head -c $bytes /dev/disk/by-partlabel/boot_$slot | sha256sum" 2>/dev/null) || return 1
+    out=${out%% *}
+    case "$out" in
+        [0-9a-f][0-9a-f]*) printf '%s\n' "$out" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Skip the boot phase when the flashed boot image is already on the device.
+# Unknown evidence means reflash: that costs a minute, while wrongly skipping
+# leaves a kernel on the phone that nothing accounts for.
 skip_boot() {
     local probe=$1 manifest=$2
-    local slot boot_sha manifest_sha
-    
-    # Read slot from probe
+    local slot want bytes have
+
     slot=$(grep '^slot=' "$probe" | cut -d= -f2)
-    [ "$slot" = "unknown" ] && return 1
-    
-    # Read boot_sha from probe
-    boot_sha=$(grep '^boot_sha=' "$probe" | cut -d= -f2)
-    [ "$boot_sha" = "unknown" ] && return 1
-    
-    # Read manifest sha for boot.img
-    manifest_sha=$(python3 -c "
-import json
+    [ -z "$slot" ] || [ "$slot" = "unknown" ] && return 1
+
+    # Expected hash and size of the image we would flash.
+    read -r want bytes <<<"$(MAN="$manifest" python3 - <<'PY'
+import json, os
 try:
-    doc = json.load(open('$manifest'))
-    art = doc.get('artifacts', {}).get('droidian/out/images/boot.img', {})
-    print(art.get('sha256', 'unknown'))
-except:
-    print('unknown')
-")
-    [ "$manifest_sha" = "unknown" ] && return 1
-    
-    # Compare
-    [ "$boot_sha" = "$manifest_sha" ] && return 0
+    doc = json.load(open(os.environ["MAN"]))
+    a = doc.get("artifacts", {}).get("droidian/out/images/boot.img", {})
+    print("%s %s" % (a.get("sha256", ""), a.get("bytes", "")))
+except Exception:
+    print(" ")
+PY
+)"
+    [ -n "$want" ] && [ -n "$bytes" ] || return 1
+
+    have=$(device_boot_sha "$slot" "$bytes") || return 1
+    [ "$have" = "$want" ] && return 0
     return 1
 }
 

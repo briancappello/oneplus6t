@@ -234,22 +234,47 @@ rm -rf "$rtsrc" "$rtout" /tmp/rt-log.$$ /tmp/rt-b.$$ /tmp/rt-plan2.$$
 
 rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ /tmp/m-empty.$$ /tmp/pl-empty.$$
 
-# Skip detection: boot phase skips when sha matches
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=aaaa\n' > /tmp/pr-boot-match.$$
-. "$ROOT/lib/phases.sh"
-if skip_boot /tmp/pr-boot-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
-    echo "  PASS  boot phase skips when sha matches"; pass=$((pass+1))
-else
-    echo "  FAIL  boot phase skips when sha matches"; fail=$((fail+1))
-fi
+expect_pred() {   # expect_pred <name> <skip|run> <predicate> <args...>
+    local name=$1 want=$2; shift 2
+    local got=run
+    "$@" && got=skip
+    if [ "$got" = "$want" ]; then
+        echo "  PASS  $name"; pass=$((pass+1))
+    else
+        echo "  FAIL  $name: expected to $want, got $got"; fail=$((fail+1))
+    fi
+}
 
-# Skip detection: boot phase runs when sha differs
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n' > /tmp/pr-boot-diff.$$
-if skip_boot /tmp/pr-boot-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
-    echo "  FAIL  boot phase runs when sha differs"; fail=$((fail+1))
-else
-    echo "  PASS  boot phase runs when sha differs"; pass=$((pass+1))
-fi
+. "$ROOT/lib/phases.sh"
+MAN="$ROOT/tests/fixtures/manifest.json"   # boot.img: sha256 aaaa, bytes 1
+
+# skip_boot hashes the first N bytes of the partition, N being the image size
+# from the manifest -- the partition is larger than the image, so a whole
+# partition hash could never match.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\n' > /tmp/pr-boot.$$
+FAKE_SSH_OUT='aaaa  -' expect_pred "boot skips when the device already has that image" \
+    skip skip_boot /tmp/pr-boot.$$ "$MAN"
+FAKE_SSH_OUT='bbbb  -' expect_pred "boot runs when the device has something else" \
+    run skip_boot /tmp/pr-boot.$$ "$MAN"
+# An unreachable device is not evidence that the flash can be skipped.
+expect_pred "boot runs when the device cannot be read" \
+    run skip_boot /tmp/pr-boot.$$ "$MAN"
+printf 'state=fastboot\nprobe_complete=no\n' > /tmp/pr-noslot.$$
+expect_pred "boot runs when the slot is unknown" \
+    run skip_boot /tmp/pr-noslot.$$ "$MAN"
+
+# skip_edl inverts the usual polarity: only positive evidence that linuxroot is
+# missing may trigger a repartition, because running it erases the device.
+for state in yes no unknown; do
+    printf 'state=droidian\nprobe_complete=yes\nhas_linuxroot=%s\n' "$state" > /tmp/pr-edl.$$
+    case "$state" in
+        no) expect_pred "edl runs only when linuxroot is positively absent" \
+                run skip_edl /tmp/pr-edl.$$ "$MAN" ;;
+        *)  expect_pred "edl skips when linuxroot is $state" \
+                skip skip_edl /tmp/pr-edl.$$ "$MAN" ;;
+    esac
+done
+rm -f /tmp/pr-boot.$$ /tmp/pr-noslot.$$ /tmp/pr-edl.$$
 
 # Skip detection: data phase skips when package versions match
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-data-match.$$
@@ -274,7 +299,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-boot.$$ --phase boot > /tmp/p-flash-boot.$$ 2>&1; rc=$?
+timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-boot.$$ --phase boot > /tmp/p-flash-boot.$$ 2>&1; rc=$?
 expect_rc "boot phase exits 0" 0 "$rc"
 expect_contains "boot phase flashes boot" /tmp/p-flash-boot.$$ 'boot: flashing'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
@@ -283,7 +308,7 @@ rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-flash-data.$$
 mkdir -p /tmp/artifacts-test/droidian
 touch /tmp/artifacts-test/droidian/userdata.img
-timeout 10 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
+timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
 expect_rc "data phase exits 0" 0 "$rc"
 expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: installing rootfs'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
@@ -296,7 +321,7 @@ touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
 touch /tmp/artifacts-test/droidian/userdata.img
 : > "$HW_LOG"
 FAKE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" \
-timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
+timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
 expect_rc "--artifacts mode exits 0" 0 "$rc"
 # rc=124 would mean a phase blocked waiting for a device. Bounded so that a
 # regression fails the suite instead of hanging it.
@@ -315,12 +340,51 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-phase.$$ --phase boot > /tmp/p-phase.$$ 2>&1; rc=$?
+timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-phase.$$ --phase boot > /tmp/p-phase.$$ 2>&1; rc=$?
 expect_rc "--phase boot exits 0" 0 "$rc"
 expect_contains "only boot phase runs" /tmp/p-phase.$$ 'boot:'
 expect_absent "edl phase is skipped" /tmp/p-phase.$$ 'edl:'
 expect_absent "data phase is skipped" /tmp/p-phase.$$ 'data:'
 rm -rf /tmp/artifacts-test /tmp/pr-phase.$$ /tmp/p-phase.$$
+
+# Destructive work must be explained and confirmed. has_linuxroot=no is the one
+# state that authorises a repartition, so it is the state to test refusal in.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=no\n' > /tmp/pr-des.$$
+mkdir -p /tmp/artifacts-test/droidian/out/images /tmp/artifacts-test/msm
+touch /tmp/artifacts-test/droidian/out/images/boot.img
+touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
+touch /tmp/artifacts-test/droidian/userdata.img
+touch /tmp/artifacts-test/msm/gpt_main0.bin
+
+: > "$HW_LOG"
+timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-des.$$ \
+    < /dev/null > /tmp/p-des.$$ 2>&1; rc=$?
+expect_rc "an unconfirmed destructive run refuses" 1 "$rc"
+expect_contains "the refusal explains how to proceed" /tmp/p-des.$$ '--yes'
+expect_contains "the erase is spelled out before asking" /tmp/p-des.$$ 'ERASES EVERY PARTITION'
+# The point of the refusal: nothing was written.
+expect_absent "a refused run repartitions nothing" "$HW_LOG" 'edl w sbl1'
+expect_absent "a refused run flashes nothing"      "$HW_LOG" 'fastboot flash'
+
+: > "$HW_LOG"
+# The device never answers here, so cap the verify wait; this case is about
+# consent, not about how long a real phone takes to come back.
+VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
+timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-des.$$ \
+    --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
+expect_rc "--yes proceeds without a terminal" 0 "$rc"
+expect_contains "the confirmed run repartitions" "$HW_LOG" 'edl w sbl1'
+
+# A run with nothing destructive to do must not ask at all.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=yes\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-quiet.$$
+: > "$HW_LOG"
+FAKE_SSH_OUT='aaaa  -' timeout 30 "$PROV" --artifacts /tmp/artifacts-test \
+    --probe-file /tmp/pr-quiet.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
+    --phase boot < /dev/null > /tmp/p-quiet.$$ 2>&1; rc=$?
+expect_rc "a run with nothing to write does not ask" 0 "$rc"
+expect_absent "no confirmation is demanded when nothing is destroyed" /tmp/p-quiet.$$ 'Type YES'
+rm -rf /tmp/artifacts-test /tmp/pr-des.$$ /tmp/p-des.$$ /tmp/p-yes.$$ \
+       /tmp/pr-quiet.$$ /tmp/p-quiet.$$
 
 echo
 echo ">>> lib/probe.sh tests"

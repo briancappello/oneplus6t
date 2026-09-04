@@ -10,7 +10,14 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSHPY="$HERE/.venv/bin/python $HERE/droidian/ssh.py"
+PATH="$PATH:$HERE/bin"
+
+# partlabels <blob> — the partition names listed after the partlabels marker.
+# Empty output means the listing did not happen, which is different from a
+# device that listed its partitions and did not have the one we wanted.
+partlabels() {
+    sed -n '/^--- partlabels$/,$p' | tail -n +2 | sed '/^$/d'
+}
 
 device_state() {
     [ -n "${PROBE_STATE:-}" ] && { printf '%s\n' "$PROBE_STATE"; return; }
@@ -19,7 +26,7 @@ device_state() {
 
 ssh_blob() {
     [ -n "${PROBE_SSH_FIXTURE:-}" ] && { cat "$PROBE_SSH_FIXTURE"; return; }
-    $SSHPY -r 'grep -E "^ro\.(build\.fingerprint|oxygen\.version)" /vendor/build.prop /system/build.prop 2>/dev/null; echo ---; dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^ii"' 2>/dev/null
+    device-ssh -r 'grep -E "^ro\.(build\.fingerprint|oxygen\.version)" /vendor/build.prop /system/build.prop 2>/dev/null; echo ---; dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^ii"; echo "--- partlabels"; ls /dev/disk/by-partlabel/ 2>/dev/null' 2>/dev/null
 }
 
 fb_blob() {
@@ -33,8 +40,8 @@ probe_all() {
     local state; state=$(device_state)
     emit state "$state"
 
-    local slot=unknown vfp=unknown oos=unknown lr=unknown bootsha=unknown
-    local complete=no blob=""
+    local slot=unknown vfp=unknown oos=unknown lr=unknown
+    local complete=no blob="" labels=""
 
     case "$state" in
         droidian)
@@ -47,6 +54,14 @@ probe_all() {
                 [ -n "${name:-}" ] || continue
                 emit "pkg_$name" "$ver"
             done < <(grep '^ii' <<<"$blob")
+            # has_linuxroot decides whether a destructive repartition is even
+            # considered, so "the listing failed" must stay distinct from "the
+            # partition is not there". Only the latter may trigger an erase.
+            labels=$(partlabels <<<"$blob")
+            if [ -z "$labels" ]; then    lr=unknown
+            elif grep -qx linuxroot <<<"$labels"; then lr=yes
+            else                         lr=no
+            fi
             [ -n "$vfp" ] && complete=yes
             ;;
         fastboot)
@@ -65,7 +80,10 @@ probe_all() {
     emit vendor_fp      "${vfp:-unknown}"
     emit oos_version    "${oos:-unknown}"
     emit has_linuxroot  "${lr:-unknown}"
-    emit boot_sha       "${bootsha:-unknown}"
+    # boot_sha is deliberately not a probe fact. A boot partition is fixed size
+    # and the image flashed into it is smaller, so hashing the partition never
+    # matches the image. The comparison needs the image's byte count from the
+    # manifest, so lib/phases.sh queries it there instead of guessing here.
     emit probe_complete "$complete"
 }
 
