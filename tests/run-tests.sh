@@ -107,6 +107,12 @@ expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
 
 rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ /tmp/m-empty.$$ /tmp/pl-empty.$$
 
+# --artifacts mode accepts a path
+"$PROV" --artifacts /tmp/nonexistent --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
+expect_rc "--artifacts mode exits 0 (not implemented yet)" 0 "$rc"
+expect_contains "--artifacts echoes the path" /tmp/p-art.$$ '/tmp/nonexistent'
+rm -f /tmp/p-art.$$
+
 echo
 echo ">>> lib/probe.sh tests"
 

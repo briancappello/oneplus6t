@@ -63,11 +63,16 @@ print(json.dumps({"build": targets, "force": False}, indent=2, sort_keys=True))
 PY
 }
 
+ARTIFACTS=""
+PHASE=""
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --plan-only)  MODE=plan; shift ;;
+        --artifacts)  shift; ARTIFACTS="${1:?--artifacts needs a path}"; MODE=artifacts; shift ;;
         --probe-file) shift; PROBE_FILE="${1:?--probe-file needs a path}"; shift ;;
         --manifest)   shift; MANIFEST="${1:?--manifest needs a path}"; shift ;;
+        --phase)      shift; PHASE="${1:?--phase needs a name}"; shift ;;
         -h|--help)    sed -n '2,16p' "$0"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
@@ -83,4 +88,10 @@ if [ "$MODE" = plan ]; then
     exit 0
 fi
 
-die "flash phases are not implemented yet (Tasks 10-13); use --plan-only"
+if [ "$MODE" = artifacts ]; then
+    echo ">>> flashing from artifacts in $ARTIFACTS"
+    # TODO: implement flash phases
+    exit 0
+fi
+
+die "no mode specified; use --plan-only or --artifacts"
