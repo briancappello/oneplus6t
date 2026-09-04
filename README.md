@@ -14,9 +14,16 @@ against a self-built Linux. See [Roadmap](#roadmap).
 ```bash
 git clone https://github.com/briancappello/oneplus6t
 cd oneplus6t
+./check-env.sh                                           # verify host tools
 python3 bootstrap.py                                     # fetch + extract
 RELEASE=oos11 .venv/bin/python restore-android.py        # phone in EDL
 ```
+
+`check-env.sh` verifies every external tool the scripts need and prints the
+exact install command for anything missing, per distro. It installs nothing
+itself — all the remediations need root, and this repo does not take root.
+Run `./check-env.sh restore` or `./check-env.sh droidian` to check one
+workflow. Each entry in it was previously discovered as a mid-build failure.
 
 | `RELEASE` | Build | Android |
 |---|---|---|
@@ -275,6 +282,58 @@ flash config says `DEVICE_HAS_DTBO_PARTITION=no`. Droidian relies on the dtbo
 already on the device — for us OxygenOS 9's, which already contains the fajita
 overlays. So unlike `flash-pmos.sh`, **do not** `fastboot erase dtbo_a` when
 installing Droidian.
+
+### Building arm64 packages: native, never cross
+
+Anything that links arm64 libraries must be built **natively** in an arm64
+container under `qemu-user-static`, not cross-compiled:
+
+```bash
+sudo pacman -S --needed qemu-user-static qemu-user-static-binfmt
+sudo systemctl restart systemd-binfmt
+```
+
+This is not a preference. Droidian's repo ships **different systemd versions
+per architecture** — `libudev1` is `257.1` for amd64 and `257.7` for arm64 —
+and `libudev1` is `Multi-Arch: same`, which requires identical versions across
+architectures. So `qtbase5-dev:arm64` → `libqt5gui5t64:arm64` →
+`libudev1:arm64` can never be satisfied inside an amd64 container, and there is
+no `257.7` amd64 to upgrade to. `releng-build-package` also calls
+`mk-build-deps` with no `--host-arch`, so build dependencies always install for
+the build architecture.
+
+The kernel misleads on this point: it cross-builds fine only because it carries
+its own Android toolchain and needs no arm64 library packages at all.
+
+The binfmt registration must have the **`F` flag** (`flags: PF`). Without it the
+kernel opens the interpreter from the calling process's mount namespace, so it
+is invisible inside a container. `check-env.sh` asserts this specifically.
+
+### Camera
+
+The camera app is black out of the box, for a reason unrelated to this device:
+Qt5 ships two camera `mediaservice` plugins and picks the wrong one.
+`libgstcamerabin.so` (generic GStreamer) cannot link a source against a vendor
+HAL and fails with `negotiation problem`, while `libaalcamera.so`
+(libhybris/droidmedia) works. Setting `backend=aal` in
+`/etc/droidian-camera.conf` is **not** sufficient — Qt resolves the service
+independently. The plugin has to be diverted out of the scanned directory:
+
+```bash
+dpkg-divert --add --rename \
+  --divert /usr/lib/aarch64-linux-gnu/qt5/plugins-disabled/libgstcamerabin.so \
+           /usr/lib/aarch64-linux-gnu/qt5/plugins/mediaservice/libgstcamerabin.so
+```
+
+Diverting it to `<plugin>.unused` in place does nothing: Qt's `QFactoryLoader`
+scans the whole directory and loads every file regardless of name.
+
+Focus is then stuck at macro — sharp a few inches out, blurry beyond — because
+`droidian-camera`'s `src/qml/main.qml` hardcodes `focusMode: Camera.FocusMacro`.
+Tapping appears to work only because the tap handler calls `searchAndLock()`.
+The QML is compiled into the binary's qrc, so no config can override it;
+`droidian/build-camera.sh` rebuilds the app with a patch that selects the best
+mode the HAL actually advertises.
 
 ### Build environment gotcha
 
