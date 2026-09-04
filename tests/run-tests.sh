@@ -86,15 +86,78 @@ expect_contains "dependencies build before their dependent" /tmp/b-ord.$$ 'deps_
 expect_contains "only the requested subgraph builds"        /tmp/b-ord.$$ 'no_extras=True'
 rm -rf /tmp/b-out.$$ /tmp/b-log.$$ /tmp/b-ord.$$
 
-rm -rf /tmp/b-mout.$$ && mkdir -p /tmp/b-mout.$$
-out=$(OUT=/tmp/b-mout.$$ FAKE_BUILD="$ROOT/tests/fixtures/fake-target" FT_LOG=/tmp/b-log.$$ FT_RC=0 \
-      "$BUILD" rootfs 2>&1); rc=$?
-manifest="/tmp/b-mout.$$/manifest.json"
+# A real, clean git source tree, so staleness is decided by real git state
+# rather than by a stubbed commit that could never disagree with itself.
+srcrepo=/tmp/b-src.$$
+rm -rf "$srcrepo"; mkdir -p "$srcrepo"/kernel "$srcrepo"/camera \
+    "$srcrepo"/adaptation "$srcrepo"/droidian
+git -C "$srcrepo" init -q
+printf 'v1\n' > "$srcrepo/kernel/f"
+git -C "$srcrepo" add -A
+git -C "$srcrepo" -c user.email=t@t -c user.name=t commit -qm one
+
+bout=/tmp/b-sout.$$
+rm -rf "$bout"
+ftlog=/tmp/b-slog.$$
+build_once() {   # build_once <target...> -- fake build into $bout from $srcrepo
+    : > "$ftlog"
+    SRC="$srcrepo" OUT="$bout" FAKE_BUILD="$ROOT/tests/fixtures/fake-target" \
+        FT_LOG="$ftlog" FT_RC=0 "$BUILD" "$@" 2>&1
+}
+
+manifest="$bout/manifest.json"
+build_once rootfs > /tmp/b-m1.$$ 2>&1; rc=$?
 expect_rc "manifest build" 0 "$rc"
 expect_json "manifest is valid JSON" "$manifest"
-# The commit is the only field with teeth: staleness is decided from it.
-expect_contains "manifest records the commit" "$manifest" '"commit": "'
-rm -rf /tmp/b-mout.$$ /tmp/b-log.$$
+
+# Contract 1: artifacts keyed by output path. provision.sh and lib/phases.sh
+# both index this map by path, so a flat per-target object cannot be consumed.
+python3 -c "
+import json
+d = json.load(open('$manifest'))
+a = d.get('artifacts', {})
+u = a.get('droidian/userdata.img', {})
+c = a.get('droidian/out-camera', {})
+print('userdata_target=' + str(u.get('target')))
+print('userdata_commit=' + str(bool(u.get('source_commit'))))
+print('userdata_sha=' + str(bool(u.get('sha256'))))
+print('dep_kept=' + str(c.get('target')))
+" > /tmp/b-man.$$ 2>&1
+expect_contains "manifest keys artifacts by output path" /tmp/b-man.$$ 'userdata_target=rootfs'
+expect_contains "manifest records a source commit"       /tmp/b-man.$$ 'userdata_commit=True'
+expect_contains "manifest records a sha256"              /tmp/b-man.$$ 'userdata_sha=True'
+# rootfs pulls in camera and adaptation; every target built this run must
+# survive in the manifest, which a per-target file would not have done.
+expect_contains "manifest keeps all targets from one run" /tmp/b-man.$$ 'dep_kept=camera'
+
+# Unchanged clean source: nothing rebuilds.
+build_once rootfs > /tmp/b-m2.$$ 2>&1
+expect_absent  "an up-to-date target is skipped" "$ftlog" 'rootfs'
+expect_contains "the skip is reported"           /tmp/b-m2.$$ 'up to date'
+
+# The source moved: it must rebuild, and say why. kernel is not a dependency
+# of rootfs, so it needs its own build first to have anything recorded.
+build_once kernel > /dev/null 2>&1
+printf 'v2\n' > "$srcrepo/kernel/f"
+git -C "$srcrepo" add -A
+git -C "$srcrepo" -c user.email=t@t -c user.name=t commit -qm two
+build_once kernel > /tmp/b-m3.$$ 2>&1
+expect_contains "a moved source commit rebuilds" "$ftlog" 'kernel'
+expect_contains "the reason is reported"         /tmp/b-m3.$$ 'source moved'
+
+# A deleted artifact rebuilds even though the commit still matches.
+rm -f "$bout/droidian/out/images/boot.img"
+build_once kernel > /tmp/b-m4.$$ 2>&1
+expect_contains "a missing artifact rebuilds" "$ftlog" 'kernel'
+expect_contains "the missing reason is reported" /tmp/b-m4.$$ 'missing'
+
+# FORCE overrides a correct up-to-date decision.
+build_once kernel > /dev/null 2>&1
+FORCE=1 build_once kernel > /tmp/b-m5.$$ 2>&1
+expect_contains "FORCE rebuilds regardless" "$ftlog" 'kernel'
+
+rm -rf "$bout" "$srcrepo" "$ftlog" /tmp/b-m1.$$ /tmp/b-m2.$$ /tmp/b-m3.$$ \
+       /tmp/b-m4.$$ /tmp/b-m5.$$ /tmp/b-man.$$
 
 echo
 echo ">>> provision.sh tests"
