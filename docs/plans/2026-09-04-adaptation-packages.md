@@ -429,7 +429,9 @@ chmod +x droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/g
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=12 failed=0`.
+Expected: `passed=10 failed=1`. The one remaining failure is
+`subdir node emits bare sysname`, which asserts `GROUP="android_graphics"` —
+that mapping arrives in Task 2b. Every other case passes here.
 
 - [ ] **Step 5: Commit**
 
@@ -441,6 +443,159 @@ The node set is computed as declared-minus-reachable rather than hand-listed,
 because an allow-list cannot be shown to be exhaustive. Restricting to
 unreachable nodes is also what stops it reverting /dev/input and /dev/dri to
 Android's values and breaking working touch and display."
+```
+
+---
+
+### Task 2b: Resolve Android user and group names
+
+**Files:**
+- Modify: `droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/generate-rules`
+- Create: `droidian/adaptation/tests/fixtures/groups.txt`, `.../users.txt`
+- Modify: `droidian/adaptation/tests/fixtures/vendor-ueventd.rc`, `.../existing.txt`
+- Modify: `droidian/adaptation/tests/run-tests.sh`
+
+**Why this task exists.** Measured on the device: the `/dev` declarations name
+**19 distinct groups, 13 of which do not exist** under that name on Droidian.
+`lxc-android` renames Android's groups with an `android_` prefix, and **11 of
+the 13** exist as `android_<name>` — `graphics` → `android_graphics`,
+`camera` → `android_camera`, `drmrpc` → `android_drmrpc`. Only `oem_2901` and
+`oem_2902` have no alias. Owners are nearly clean: only `usb` is missing.
+
+udev **silently drops** a `GROUP=` it cannot resolve while still applying the
+mode and owner. That is the same fail-quietly mode as the `KERNEL=` path bug,
+and it would affect the majority of emitted rules.
+
+**Rules:**
+1. Resolve `X`; if absent, resolve `android_X`; use whichever exists.
+2. If neither resolves, **emit no rule** for that node and log the skip to
+   stderr. Never substitute a different group — that would invent access.
+3. A skipped declaration is **not** recorded as handled, so a later, coarser
+   declaration of the same node can still apply. `/dev/diag` is declared
+   `system:oem_2901` in the vendor file and `radio:radio` in the base file; the
+   vendor one is unusable, so the base one is used. The device's own policy
+   still decides, just via its next most specific usable statement.
+
+Mapping grants nothing new: `droidian` is already a member of these groups.
+
+- [ ] **Step 1: Extend the fixtures**
+
+Append to `tests/fixtures/vendor-ueventd.rc` (verbatim device lines — note
+`byte-cntr`'s irregular single space, which is real):
+
+```
+/dev/byte-cntr            0660   system    oem_2902
+/dev/rmnet_ctrl           0660   usb        usb
+```
+
+`byte-cntr` covers an unresolvable **group** with no alias; `rmnet_ctrl` covers
+an unresolvable **owner**. Append both nodes to `tests/fixtures/existing.txt`.
+
+`tests/fixtures/groups.txt` — groups that exist on Droidian:
+
+```
+root
+system
+radio
+input
+android_graphics
+android_drmrpc
+```
+
+`tests/fixtures/users.txt`:
+
+```
+root
+system
+radio
+```
+
+- [ ] **Step 2: Write the failing tests**
+
+Capture stderr, since the skips are asserted:
+
+```bash
+export HHP_GROUP_EXISTS_CMD="grep -qxF \"\$1\" $FIX/groups.txt"
+export HHP_USER_EXISTS_CMD="grep -qxF \"\$1\" $FIX/users.txt"
+"$GEN" > /tmp/hhp-map.$$ 2>/tmp/hhp-err.$$
+
+expect_contains "graphics maps to android_graphics" /tmp/hhp-map.$$ \
+    'KERNEL=="renderD128", OWNER="root", GROUP="android_graphics", MODE="0666"'
+expect_contains "drmrpc maps to android_drmrpc" /tmp/hhp-map.$$ \
+    'KERNEL=="qseecom", OWNER="system", GROUP="android_drmrpc", MODE="0660"'
+expect_absent "unresolvable group emits nothing" /tmp/hhp-map.$$ 'byte-cntr'
+expect_absent "unresolvable owner emits nothing" /tmp/hhp-map.$$ 'rmnet_ctrl'
+expect_contains "the skip is logged, not silent" /tmp/hhp-err.$$ \
+    'skipping /dev/byte-cntr: no group oem_2902 or android_oem_2902'
+expect_contains "falls back to the base declaration for diag" /tmp/hhp-map.$$ \
+    'KERNEL=="diag", OWNER="radio", GROUP="radio"'
+rm -f /tmp/hhp-map.$$ /tmp/hhp-err.$$
+```
+
+The last case is the one that proves rule 3: the vendor declaration
+(`system:oem_2901`) is unusable, so the base declaration (`radio:radio`) applies
+instead of the node being dropped.
+
+- [ ] **Step 3: Implement**
+
+Add the seams and resolver above `denied`:
+
+```bash
+group_exists() {
+    if [ -n "${HHP_GROUP_EXISTS_CMD:-}" ]; then
+        eval "${HHP_GROUP_EXISTS_CMD//\$1/$1}"; return
+    fi
+    getent group "$1" >/dev/null 2>&1
+}
+
+user_exists() {
+    if [ -n "${HHP_USER_EXISTS_CMD:-}" ]; then
+        eval "${HHP_USER_EXISTS_CMD//\$1/$1}"; return
+    fi
+    getent passwd "$1" >/dev/null 2>&1
+}
+
+# Droidian's lxc-android renames Android's groups with an android_ prefix.
+# udev silently drops a GROUP= it cannot resolve while still applying the mode,
+# so an unresolved name is a rule that half-applies and reports nothing.
+resolve_name() {   # resolve_name <exists-fn> <name>
+    if "$1" "$2"; then printf '%s\n' "$2"; return 0; fi
+    if "$1" "android_$2"; then printf '%s\n' "android_$2"; return 0; fi
+    return 1
+}
+```
+
+In the emit loop, after the `denied` check and **before** `emitted` is updated:
+
+```bash
+            if ! ruid=$(resolve_name user_exists "$uid"); then
+                printf 'halium-hostdev-perms: skipping %s: no user %s or android_%s\n' \
+                       "$node" "$uid" "$uid" >&2
+                continue
+            fi
+            if ! rgid=$(resolve_name group_exists "$gid"); then
+                printf 'halium-hostdev-perms: skipping %s: no group %s or android_%s\n' \
+                       "$node" "$gid" "$gid" >&2
+                continue
+            fi
+```
+
+Emit `"$ruid"` / `"$rgid"`, and keep the unresolved original in the provenance
+comment so the mapping is visible in the generated file.
+
+- [ ] **Step 4: Run**
+
+```bash
+./droidian/adaptation/tests/run-tests.sh
+```
+
+Expected: `passed=17 failed=0`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add droidian/adaptation
+git commit -m "feat(adaptation): resolve Android group names to Droidian's android_ aliases"
 ```
 
 ---
@@ -547,7 +702,7 @@ denied() {
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=18 failed=0`.
+Expected: `passed=23 failed=0`.
 
 - [ ] **Step 6: Commit**
 

@@ -46,6 +46,35 @@ reachable() {
     runuser -u "$TARGET_USER" -- test -w "$1" 2>/dev/null
 }
 
+group_exists() {
+    if [ -n "${HHP_GROUP_EXISTS_CMD:-}" ]; then
+        eval "${HHP_GROUP_EXISTS_CMD//\$1/$1}"; return
+    fi
+    getent group "$1" >/dev/null 2>&1
+}
+
+user_exists() {
+    if [ -n "${HHP_USER_EXISTS_CMD:-}" ]; then
+        eval "${HHP_USER_EXISTS_CMD//\$1/$1}"; return
+    fi
+    getent passwd "$1" >/dev/null 2>&1
+}
+
+# Droidian's lxc-android renames Android's groups with an android_ prefix:
+# graphics -> android_graphics, camera -> android_camera, drmrpc ->
+# android_drmrpc. Measured on fajita, 13 of the 19 groups named in ueventd.rc
+# do not exist under their Android name and 11 exist under the prefixed one.
+#
+# This matters because udev SILENTLY DROPS a GROUP= it cannot resolve while
+# still applying the mode and owner -- a rule that half-applies and reports
+# nothing. Resolve the name or emit no rule at all; never substitute a
+# different group, which would grant access the vendor policy never described.
+resolve_name() {   # resolve_name <exists-fn> <name>
+    if "$1" "$2"; then printf '%s\n' "$2"; return 0; fi
+    if "$1" "android_$2"; then printf '%s\n' "android_$2"; return 0; fi
+    return 1
+}
+
 denied() { return 1; }   # replaced in Task 3
 
 declared=0
@@ -68,14 +97,30 @@ for f in $UEVENTD_FILES; do
             case " $emitted " in *" $node "*) continue ;; esac
             reachable "$node" && continue
             denied "$node" && continue
+            # A skipped declaration is NOT recorded as handled, so a later,
+            # coarser declaration of the same node can still apply. /dev/diag is
+            # system:oem_2901 in the vendor file and radio:radio in the base
+            # one; the vendor form is unusable, so the base form is used.
+            if ! ruid=$(resolve_name user_exists "$uid"); then
+                printf 'halium-hostdev-perms: skipping %s: no user %s or android_%s\n' \
+                       "$node" "$uid" "$uid" >&2
+                continue
+            fi
+            if ! rgid=$(resolve_name group_exists "$gid"); then
+                printf 'halium-hostdev-perms: skipping %s: no group %s or android_%s\n' \
+                       "$node" "$gid" "$gid" >&2
+                continue
+            fi
             emitted="$emitted $node"
             # udev matches KERNEL against the SYSNAME, not the path under /dev.
             # /dev/dri/card0 has sysname "card0", so stripping only the "/dev/"
             # prefix would emit KERNEL=="dri/card0", which matches nothing and
             # fails silently -- the exact failure mode this design forbids.
+            # Keep the UNRESOLVED names in the provenance comment, so any
+            # android_ remapping is visible by reading the generated file.
             printf '\n# ueventd.rc: %s %s %s %s\n' "$path" "$mode" "$uid" "$gid"
             printf 'ACTION=="add", KERNEL=="%s", OWNER="%s", GROUP="%s", MODE="%s"\n' \
-                   "${node##*/}" "$uid" "$gid" "$mode"
+                   "${node##*/}" "$ruid" "$rgid" "$mode"
         done < <(expand "$path")
     done < "$f"
 done

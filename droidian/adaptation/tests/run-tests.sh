@@ -41,6 +41,11 @@ export HHP_UEVENTD_FILES="$FIX/vendor-ueventd.rc $FIX/ueventd.rc"
 # every machine. The real one expands against the device's own /dev at boot.
 export FIX
 export HHP_EXPAND_CMD="$HERE/fake-expand \"\$1\""
+# Group and user resolution is also a seam: this host has no "system" or
+# "radio" group, so falling through to the real getent would make the results
+# depend on the machine running the tests.
+export HHP_GROUP_EXISTS_CMD="grep -qxF \"\$1\" $FIX/groups.txt"
+export HHP_USER_EXISTS_CMD="grep -qxF \"\$1\" $FIX/users.txt"
 
 echo ">>> adaptation tests"
 # Task 2+ append their cases below this line.
@@ -68,13 +73,30 @@ expect_absent "expansion did not leak this host's /dev" /tmp/hhp-out.$$ 'event20
 # udev matches KERNEL against the sysname. A subdirectory node must emit its
 # basename; KERNEL=="dri/renderD128" would match nothing and fail silently.
 expect_contains "subdir node emits bare sysname" /tmp/hhp-out.$$ \
-    'KERNEL=="renderD128", OWNER="root", GROUP="graphics", MODE="0666"'
+    'KERNEL=="renderD128", OWNER="root", GROUP="android_graphics", MODE="0666"'
 expect_absent "KERNEL is never a path" /tmp/hhp-out.$$ 'KERNEL=="dri/'
 
-# /dev/diag is declared in both files; the vendor file is read first and wins.
-expect_contains "vendor declaration wins for diag" /tmp/hhp-out.$$ \
-    'KERNEL=="diag", OWNER="system", GROUP="oem_2901"'
 rm -f /tmp/hhp-out.$$
+
+# ---------------------------------------------------------------- Task 2b
+# 13 of the 19 groups named in this device's ueventd.rc do not exist under that
+# name on Droidian; 11 exist as android_<name>. udev silently drops a GROUP= it
+# cannot resolve while still applying the mode, so resolution is not cosmetic.
+"$GEN" > /tmp/hhp-map.$$ 2>/tmp/hhp-err.$$
+
+expect_contains "graphics maps to android_graphics" /tmp/hhp-map.$$ \
+    'KERNEL=="renderD128", OWNER="root", GROUP="android_graphics", MODE="0666"'
+expect_contains "drmrpc maps to android_drmrpc" /tmp/hhp-map.$$ \
+    'KERNEL=="qseecom", OWNER="system", GROUP="android_drmrpc", MODE="0660"'
+expect_absent "unresolvable group emits nothing" /tmp/hhp-map.$$ 'byte-cntr'
+expect_absent "unresolvable owner emits nothing" /tmp/hhp-map.$$ 'rmnet_ctrl'
+expect_contains "the skip is logged, not silent" /tmp/hhp-err.$$ \
+    'skipping /dev/byte-cntr: no group oem_2902 or android_oem_2902'
+# The vendor declaration of diag (system:oem_2901) is unusable, so the base
+# file's declaration applies rather than the node being dropped.
+expect_contains "falls back to the base declaration for diag" /tmp/hhp-map.$$ \
+    'KERNEL=="diag", OWNER="radio", GROUP="radio"'
+rm -f /tmp/hhp-map.$$ /tmp/hhp-err.$$
 
 echo
 echo "passed=$pass failed=$fail"

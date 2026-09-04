@@ -12,3 +12,5 @@
 /dev/subsys_modem
 /dev/ramdump_modem
 /dev/kmsg
+/dev/byte-cntr
+/dev/rmnet_ctrl

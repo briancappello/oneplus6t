@@ -5,3 +5,5 @@
 /dev/subsys_*         0640   system     system
 /dev/ramdump*             0640   system     system
 /dev/kmsg                                               0620   root       system
+/dev/byte-cntr            0660   system    oem_2902
+/dev/rmnet_ctrl           0660   usb        usb
