@@ -21,3 +21,10 @@ edl_config.json
 
 # dead: references $ROM/*.img paths that never existed
 edl-fix-critical.sh
+
+# Droidian build: sources and artifacts are fetched/generated, only the
+# fajita packaging overlay and the build script are tracked
+droidian/kernel/
+droidian/out/
+droidian/local-repo/
+droidian-build-tools/

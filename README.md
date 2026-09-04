@@ -163,6 +163,7 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 | Restore stock OxygenOS 11 from EDL | done |
 | Flash OxygenOS 9 | done (`RELEASE=oos9`), not yet run on hardware |
 | Flash postmarketOS | `flash-pmos.sh`, works, not yet integrated |
+| Droidian kernel | builds — `droidian/build-kernel.sh`, not yet booted |
 | Flash LineageOS | not started |
 | Dual-boot Android + a self-built Linux | GPT layout done, boot side not started |
 
@@ -221,6 +222,67 @@ Android later.
   `fastboot --disable-verity --disable-verification flash vbmeta_b`.
 - **No shared storage.** Android's `/data` is `fileencryption=ice`, so Linux
   cannot read it. A shared area would have to be a third partition.
+
+## Droidian
+
+Droidian runs the vendor Android kernel under libhybris/halium, so vendor blobs
+— camera in particular — work where mainline struggles on sdm845. Its device
+page requires stock **Android 9, specifically 9.0.17 on the 6T**, which is
+exactly what `RELEASE=oos9` installs (`ro.oxygen.version=9.0.17`).
+
+```bash
+./droidian/build-kernel.sh      # -> droidian/out/images/{boot,recovery,vbmeta}.img
+```
+
+Only the packaging overlay and the build script are tracked; the 1.1 GB kernel
+source is cloned at a pinned commit and the build runs in Droidian's own
+container. podman works — their tooling locates the runtime with
+`whereis -b docker`, so a shim on `PATH` is enough. No Docker, no root.
+
+### Why this repo carries its own packaging
+
+There is no prebuilt Droidian image for this device any more. The one the
+device page links to (`FakeShell/droidian-oneplus6`) is a 404 — the repo was
+deleted, Wayback holds only a capture of the 404 itself, Software Heritage
+first visited after deletion, and archive.org has nothing. The **live** device
+data still points at that dead URL.
+
+The surviving source, `junocomp/linux-android-oneplus-oneplus6` (branch
+`droidian`), **cannot build as published** — it ships no `debian/control`, so
+the build dies at `Unable to find debian/control`. That is very likely why
+nobody has regenerated the image. `droidian/packaging/debian/control` is a
+reconstruction, modelled on the `droidian-devices/linux-android-fxtec-pro1`
+reference port and the values in `kernel-info.mk`.
+
+### Explicitly fajita
+
+Upstream targets `DEVICE_MODEL=oneplus6` with `KERNEL_DEFCONFIG=enchilada_defconfig`
+and calls itself "Oneplus 6/6T". We retarget to `fajita`, so artifacts are named
+`linux-bootimage-4.9-113-oneplus-fajita` and there is no ambiguity about which
+device an image is for.
+
+`fajita_defconfig` is byte-identical to `enchilada_defconfig` — that file holds
+only SoC configuration and contains no device-name strings, so this is a naming
+change, not a functional one. The device tree genuinely covers the 6T already:
+`CONFIG_BUILD_ARM64_DT_OVERLAY=y`, and `arch/arm64/boot/dts/qcom/Makefile` lists
+10 `fajita-*.dtbo` overlays beside the enchilada ones, all on the shared
+`sdm845-v2.1.dtb` base. The bootloader selects the right overlay by hardware ID.
+
+### Do not erase dtbo
+
+`kernel-info.mk` sets `KERNEL_IMAGE_WITH_DTB_OVERLAY=0`, and the generated
+flash config says `DEVICE_HAS_DTBO_PARTITION=no`. Droidian relies on the dtbo
+already on the device — for us OxygenOS 9's, which already contains the fajita
+overlays. So unlike `flash-pmos.sh`, **do not** `fastboot erase dtbo_a` when
+installing Droidian.
+
+### Build environment gotcha
+
+`quay.io/droidian/build-essential:bookworm-amd64` was last rebuilt in May 2024.
+Every Droidian apt repo now fails inside it with
+`NO_PUBKEY 5E775B2A27AB0C94`, plus an expired Mobian key, and the build stalls
+at dependency resolution having compiled nothing. Use `current-amd64`, which is
+rebuilt continuously.
 
 ## Device this was built against
 

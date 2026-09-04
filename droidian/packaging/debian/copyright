@@ -1,0 +1,11 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: linux-android-oneplus-oneplus6
+Source: https://github.com/junocomp/linux-android-oneplus-oneplus6
+
+Files: *
+Copyright: Linus Torvalds and others
+License: GPL-2
+
+Files: debian/*
+Copyright: 2024 Droidian porters
+License: GPL-2
