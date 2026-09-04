@@ -1,0 +1,6 @@
+/system/build.prop:ro.build.fingerprint=halium/lineage_halium_arm64/halium_arm64:9/PQ3A.190801.002/8:userdebug/test-keys
+---
+ii  adaptation-oneplus-fajita 1.0.0                                  all          Device adaptation for the OnePlus 6T (fajita)
+ii  droidian-camera           16+z1.1+git20260904141054.bbe4a34.head arm64        This package contains Droidian's default camera app.
+ii  halium-hostdev-perms      1.0.0                                  all          Restore Android /dev permissions on the host for Halium devices
+ii  halium-oldkernel-compat   1.0.0                                  all          Make polkit authenticate on kernels without pidfd

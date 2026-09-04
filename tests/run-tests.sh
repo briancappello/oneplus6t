@@ -79,5 +79,31 @@ expect_contains "manifest records the output"  "$manifest" '"output": "droidian/
 rm -rf /tmp/b-mout.$$ /tmp/b-log.$$
 
 echo
+echo ">>> lib/probe.sh tests"
+
+PROBE="$ROOT/lib/probe.sh"
+
+# Droidian: everything readable over ssh.
+PROBE_STATE=droidian PROBE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" \
+    bash "$PROBE" probe_all > /tmp/p-dro.$$ 2>&1
+expect_contains "state is reported"        /tmp/p-dro.$$ 'state=droidian'
+expect_contains "fingerprint is parsed"    /tmp/p-dro.$$ 'vendor_fp=halium/lineage_halium_arm64'
+expect_contains "package versions parsed"  /tmp/p-dro.$$ 'pkg_halium-hostdev-perms=1.0.0'
+expect_contains "probe is complete"        /tmp/p-dro.$$ 'probe_complete=yes'
+
+# fastboot: less is readable, and what is missing must say so.
+PROBE_STATE=fastboot PROBE_FB_FIXTURE="$HERE/fixtures/probe-fastboot.txt" \
+    bash "$PROBE" probe_all > /tmp/p-fb.$$ 2>&1
+expect_contains "slot is parsed in fastboot" /tmp/p-fb.$$ 'slot=a'
+expect_contains "unreadable facts say unknown" /tmp/p-fb.$$ '=unknown'
+expect_contains "an incomplete probe says so"  /tmp/p-fb.$$ 'probe_complete=no'
+
+# A powered-off phone must not produce confident answers.
+PROBE_STATE=off bash "$PROBE" probe_all > /tmp/p-off.$$ 2>&1
+expect_contains "off reports its state"   /tmp/p-off.$$ 'state=off'
+expect_contains "off is never complete"   /tmp/p-off.$$ 'probe_complete=no'
+rm -f /tmp/p-dro.$$ /tmp/p-fb.$$ /tmp/p-off.$$
+
+echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

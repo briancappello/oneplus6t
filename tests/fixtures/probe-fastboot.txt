@@ -1,0 +1,75 @@
+current-slot: a
+(bootloader) slot-count: 2
+(bootloader) slot-suffixes: _a
+(bootloader) slot-suffixes: _b
+(bootloader) slot-successful-a: yes
+(bootloader) slot-successful-b: no
+(bootloader) slot-unbootable-a: no
+(bootloader) slot-unbootable-b: yes
+(bootloader) all:
+(bootloader)   battery-status: 100
+(bootloader)   battery-voltage: 4350
+(bootloader)   board: fajita
+(bootloader)   bootloader: falcon-04.45-00189
+(bootloader)   bootloader-mode: fsg
+(bootloader)   bootloader-message: 
+(bootloader)   bootloader-support: yes
+(bootloader)   bootloader-type: unknown
+(bootloader)   bootloader-version: falcon-04.45-00189
+(bootloader)   bootmode: unknown
+(bootloader)   brandid: OnePlus
+(bootloader)   build-type: user
+(bootloader)   device: fajita
+(bootloader)   display-id: unknown
+(bootloader)   kernel-version: unknown
+(bootloader)   product: fajita
+(bootloader)   serialno: unknown
+(bootloader)   slot-count: 2
+(bootloader)   slot-suffixes: _a
+(bootloader)   slot-suffixes: _b
+(bootloader)   slot-successful-a: yes
+(bootloader)   slot-successful-b: no
+(bootloader)   slot-unbootable-a: no
+(bootloader)   slot-unbootable-b: yes
+(bootloader)   supported: yes
+(bootloader)   version-baseband: unknown
+(bootloader)   version-bootloader: falcon-04.45-00189
+(bootloader)   version-bootloader-critical: unknown
+(bootloader)   version-misc: unknown
+(bootloader)   version-otacerts: unknown
+(bootloader)   version-radio: unknown
+(bootloader)   yes: yes
+all:
+(bootloader)   battery-status: 100
+(bootloader)   battery-voltage: 4350
+(bootloader)   board: fajita
+(bootloader)   bootloader: falcon-04.45-00189
+(bootloader)   bootloader-mode: fsg
+(bootloader)   bootloader-message: 
+(bootloader)   bootloader-support: yes
+(bootloader)   bootloader-type: unknown
+(bootloader)   bootloader-version: falcon-04.45-00189
+(bootloader)   bootmode: unknown
+(bootloader)   brandid: OnePlus
+(bootloader)   build-type: user
+(bootloader)   device: fajita
+(bootloader)   display-id: unknown
+(bootloader)   kernel-version: unknown
+(bootloader)   product: fajita
+(bootloader)   serialno: unknown
+(bootloader)   slot-count: 2
+(bootloader)   slot-suffixes: _a
+(bootloader)   slot-suffixes: _b
+(bootloader)   slot-successful-a: yes
+(bootloader)   slot-successful-b: no
+(bootloader)   slot-unbootable-a: no
+(bootloader)   slot-unbootable-b: yes
+(bootloader)   supported: yes
+(bootloader)   version-baseband: unknown
+(bootloader)   version-bootloader: falcon-04.45-00189
+(bootloader)   version-bootloader-critical: unknown
+(bootloader)   version-misc: unknown
+(bootloader)   version-otacerts: unknown
+(bootloader)   version-radio: unknown
+(bootloader)   yes: yes
+finished. total time: 0.053s
