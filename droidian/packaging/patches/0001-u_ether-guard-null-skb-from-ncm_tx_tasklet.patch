@@ -1,0 +1,64 @@
+From: oneplus6t port <none@localhost>
+Subject: [PATCH] usb: gadget: u_ether: guard NULL skb from ncm_tx_tasklet
+
+eth_start_xmit() can be called with skb == NULL. f_ncm.c does this
+deliberately when flushing a partially filled NTB:
+
+    ncm->netdev->netdev_ops->ndo_start_xmit(NULL, ncm->netdev);
+
+Two paths then dereference the NULL skb:
+
+1. The "no IN endpoint" bail-out is written as
+
+       if (skb && !in) { ... return NETDEV_TX_OK; }
+
+   so when the gadget has been torn down (dev->port_usb == NULL, hence
+   in == NULL) *and* skb is NULL, it falls through instead of returning.
+
+2. The CDC/RNDIS filter block then runs
+
+       u8 *dest = skb->data;
+
+   unconditionally. With port_usb NULL, cdc_filter is left 0, so
+   is_promisc(0) is false and the block is entered.
+
+The result is a NULL dereference at offsetof(struct sk_buff, data) == 0xd0
+in softirq context, which is fatal:
+
+    Unable to handle kernel NULL pointer dereference at virtual address 000000d0
+    PC is at eth_start_xmit+0x80/0x6c0
+    Call trace:
+      eth_start_xmit
+      ncm_tx_tasklet
+      tasklet_action
+      __do_softirq
+    Kernel panic - not syncing: Fatal exception in interrupt
+
+This reproduces reliably on Droidian: the halium initramfs brings up an
+RNDIS gadget, then userspace reconfigures the gadget to NCM over configfs.
+The NCM tx tasklet fires against the half-torn-down netdev and panics the
+kernel about five seconds after systemd starts. Android never hits it
+because it does not use NCM.
+
+diff --git a/drivers/usb/gadget/function/u_ether.c b/drivers/usb/gadget/function/u_ether.c
+index c75e790d2..1aa21e7e4 100644
+--- a/drivers/usb/gadget/function/u_ether.c
++++ b/drivers/usb/gadget/function/u_ether.c
+@@ -788,13 +788,14 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
+ 	}
+ 	spin_unlock_irqrestore(&dev->lock, flags);
+ 
+-	if (skb && !in) {
+-		dev_kfree_skb_any(skb);
++	if (!in) {
++		if (skb)
++			dev_kfree_skb_any(skb);
+ 		return NETDEV_TX_OK;
+ 	}
+ 
+ 	/* apply outgoing CDC or RNDIS filters */
+-	if (!test_bit(RMNET_MODE_LLP_IP, &dev->flags) &&
++	if (skb && !test_bit(RMNET_MODE_LLP_IP, &dev->flags) &&
+ 			!is_promisc(cdc_filter)) {
+ 		u8		*dest = skb->data;
+ 

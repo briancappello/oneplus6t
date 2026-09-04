@@ -72,6 +72,23 @@ cp -v "$HERE/packaging/arch/arm64/configs/fajita_defconfig" \
 # regenerated from git history by releng-build-changelog; a stale one breaks it
 rm -f "$KERNEL_DIR/debian/changelog"
 
+if [ -d "$HERE/packaging/patches" ]; then
+    echo ">>> applying patches"
+    for p in "$HERE"/packaging/patches/*.patch; do
+        [ -e "$p" ] || continue
+        name=$(basename "$p")
+        # Idempotent: skip if already applied, fail loudly if it does not apply.
+        if git -C "$KERNEL_DIR" apply --reverse --check "$p" 2>/dev/null; then
+            echo "    $name (already applied)"
+        elif git -C "$KERNEL_DIR" apply "$p" 2>/dev/null; then
+            echo "    $name"
+        else
+            echo "    $name FAILED TO APPLY" >&2
+            exit 1
+        fi
+    done
+fi
+
 echo ">>> building in $IMAGE (this takes a while; log: $LOG)"
 $(runtime) run --rm \
     -v "$OUT_DIR":/buildd \
