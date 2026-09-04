@@ -762,18 +762,37 @@ A rule with a trailing inline comment is silently discarded by udev, and
 already. Append to `run-tests.sh`:
 
 ```bash
-if command -v udevadm >/dev/null 2>&1; then
+# --resolve-names=never because verify resolves users and groups against
+# whichever host runs it. The names here are the DEVICE's (system, radio,
+# android_graphics) and exist on no build host, so resolving would fail
+# everywhere except the phone. Resolution is the device's job at boot.
+if command -v udevadm >/dev/null 2>&1 && udevadm verify --help >/dev/null 2>&1; then
     "$GEN" > /tmp/hhp-syn.$$ 2>/dev/null
-    if udevadm verify /tmp/hhp-syn.$$ >/tmp/hhp-verify.$$ 2>&1; then
+    if udevadm verify --resolve-names=never /tmp/hhp-syn.$$ >/tmp/hhp-verify.$$ 2>&1; then
         echo "  PASS  udevadm verify accepts generated rules"; pass=$((pass+1))
     else
         echo "  FAIL  udevadm verify rejected the rules"; sed 's/^/        /' /tmp/hhp-verify.$$; fail=$((fail+1))
     fi
-    rm -f /tmp/hhp-syn.$$ /tmp/hhp-verify.$$
+
+    # A check that cannot fail is not a check. Prove verify rejects the exact
+    # defect this guards: a rule with a trailing inline comment.
+    sed '$a ACTION=="add", KERNEL=="zz", OWNER="root", GROUP="root", MODE="0666" # bad' \
+        /tmp/hhp-syn.$$ > /tmp/hhp-bad.$$
+    if udevadm verify --resolve-names=never /tmp/hhp-bad.$$ >/dev/null 2>&1; then
+        echo "  FAIL  verify accepted a trailing inline comment"; fail=$((fail+1))
+    else
+        echo "  PASS  verify rejects a trailing inline comment"; pass=$((pass+1))
+    fi
+    rm -f /tmp/hhp-syn.$$ /tmp/hhp-verify.$$ /tmp/hhp-bad.$$
 else
-    echo "  SKIP  udevadm not present"
+    echo "  SKIP  udevadm verify not available"
 fi
 ```
+
+Running verify **with** name resolution on a build host prints
+`Failed to resolve group 'system', ignoring` — which is also direct confirmation
+of why Task 2b exists: udev applies the rest of the rule and drops only the
+group, so an unresolved name half-applies and reports nothing.
 
 - [ ] **Step 2: Run it**
 
@@ -781,8 +800,8 @@ fi
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: PASS. If it fails, the generator is emitting invalid syntax — fix
-the generator, not the test.
+Expected: `passed=27 failed=0`. If verify fails, the generator is emitting
+invalid syntax — fix the generator, not the test.
 
 - [ ] **Step 3: Commit**
 

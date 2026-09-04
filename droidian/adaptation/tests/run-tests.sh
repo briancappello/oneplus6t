@@ -137,6 +137,37 @@ expect_contains "same-named file in the later dir masks the earlier" \
     /tmp/hhp-mask.$$ 'KERNEL=="qseecom"'
 rm -rf "$tmp_root" /tmp/hhp-ord.$$ /tmp/hhp-mask.$$
 
+# ---------------------------------------------------------------- Task 4
+# udev silently discards a rule with a trailing inline comment, and
+# "udevadm control --reload-rules" reports nothing. Only udevadm verify
+# catches it. This cost a debugging cycle already.
+#
+# --resolve-names=never because verify resolves users and groups against
+# whichever host runs it. The names here are the DEVICE's (system, radio,
+# android_graphics) and do not exist on a build host, so resolving would fail
+# everywhere except the phone. Resolution is the device's job at boot.
+if command -v udevadm >/dev/null 2>&1 && udevadm verify --help >/dev/null 2>&1; then
+    "$GEN" > /tmp/hhp-syn.$$ 2>/dev/null
+    if udevadm verify --resolve-names=never /tmp/hhp-syn.$$ >/tmp/hhp-verify.$$ 2>&1; then
+        echo "  PASS  udevadm verify accepts generated rules"; pass=$((pass+1))
+    else
+        echo "  FAIL  udevadm verify rejected the rules"; sed 's/^/        /' /tmp/hhp-verify.$$; fail=$((fail+1))
+    fi
+
+    # A check that cannot fail is not a check. Prove verify rejects the exact
+    # defect this guards: a rule with a trailing inline comment.
+    sed '$a ACTION=="add", KERNEL=="zz", OWNER="root", GROUP="root", MODE="0666" # bad' \
+        /tmp/hhp-syn.$$ > /tmp/hhp-bad.$$
+    if udevadm verify --resolve-names=never /tmp/hhp-bad.$$ >/dev/null 2>&1; then
+        echo "  FAIL  verify accepted a trailing inline comment"; fail=$((fail+1))
+    else
+        echo "  PASS  verify rejects a trailing inline comment"; pass=$((pass+1))
+    fi
+    rm -f /tmp/hhp-syn.$$ /tmp/hhp-verify.$$ /tmp/hhp-bad.$$
+else
+    echo "  SKIP  udevadm verify not available"
+fi
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
