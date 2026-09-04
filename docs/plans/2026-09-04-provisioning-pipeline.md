@@ -55,6 +55,9 @@ prevents:
   source commit differs from the current one. A dirty tree is never up to date.
 - **Delegate, never reimplement.** Build logic stays in the per-target scripts;
   flashing stays in `flash.sh` and `restore-android.py`.
+- **Proven work is committed and pushed.** Once something is verified on
+  hardware it goes to `origin`, and the worker fetches from there. A git bundle
+  is only for work deliberately kept unpushed because it is not yet proven.
 - **The `edl` phase refuses to run without explicit acknowledgement** on first
   use. Not to protect data — there is none worth keeping — but because a
   half-written GPT costs a full EDL recovery cycle.
@@ -1527,15 +1530,23 @@ that a destructive phase can be skipped. The build.sh round trip is tested."
 - Produces: `remote_build <host> <plan-file>`, leaving artifacts and
   `manifest.json` under `$HERE/droidian/`. Tasks 10–13 read them from there.
 
-**Transfer is by git bundle, not by pushing to a forge.** A bundle carries the
-exact commits, needs no network service, no credentials and no public push, and
-leaves the worker's git state honest rather than a pile of rsynced files. This
-is the sequence already used by hand:
+**Two transports, chosen by whether the commit is published.** Proven work is
+pushed to `origin`, and the worker just fetches it — that is the normal path and
+it leaves an auditable trail. A git bundle is the fallback for work that is
+still unproven and therefore deliberately unpushed, so the worker can build a
+WIP commit without publishing it.
+
+Either way the worker ends up at an exact commit with an honest git state,
+never a pile of rsynced files.
 
 ```bash
-git bundle create /tmp/op6t.bundle main
+# published (normal): worker fetches from origin
+ssh HOST 'cd ~/oneplus6t && git fetch -q origin && git reset -q --hard <sha>'
+
+# unpublished (WIP): carry the commits over by bundle
+git bundle create /tmp/op6t.bundle HEAD
 scp /tmp/op6t.bundle HOST:/tmp/
-ssh HOST 'cd ~/oneplus6t && git fetch -q /tmp/op6t.bundle main && git reset -q --hard FETCH_HEAD'
+ssh HOST 'cd ~/oneplus6t && git fetch -q /tmp/op6t.bundle && git reset -q --hard FETCH_HEAD'
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -1564,10 +1575,23 @@ PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ \
     "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /tmp/rb.$$ 2>&1
 rc=$?
 expect_rc "remote build succeeds"            0 "$rc"
-expect_contains "the bundle is copied over"  "$rlog" 'SCP'
-expect_contains "the worker resets to it"    "$rlog" 'FETCH_HEAD'
+expect_contains "the plan is copied over"    "$rlog" 'SCP'
+expect_contains "the worker is reset to a commit" "$rlog" 'reset -q --hard'
 expect_contains "build.sh runs with the plan" "$rlog" 'build.sh --plan'
 expect_contains "artifacts are fetched back" "$rlog" 'manifest.json'
+
+# A published commit must go over origin, not by bundle: the bundle path exists
+# only for work deliberately kept unpushed.
+: > "$rlog"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /dev/null 2>&1
+expect_contains "a published commit fetches from origin" "$rlog" 'git fetch -q origin'
+expect_absent  "a published commit sends no bundle"      "$rlog" 'op6t.bundle'
+
+: > "$rlog"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=0 \
+    "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /dev/null 2>&1
+expect_contains "unpublished WIP goes by bundle" "$rlog" 'op6t.bundle'
 
 # A worker that fails must fail the run, not silently continue to flashing.
 cat > /tmp/fake-ssh.$$ <<'FS'
@@ -1598,20 +1622,33 @@ SSH_CMD="${PROV_SSH:-ssh}"
 SCP_CMD="${PROV_SCP:-scp}"
 REMOTE_DIR="${REMOTE_DIR:-oneplus6t}"
 
-# Ship the exact commits by bundle: no forge, no credentials, no public push,
-# and the worker keeps an honest git state instead of a pile of copied files.
+# Published commits go over origin; unpublished WIP goes by bundle. Both land
+# the worker on an exact commit with an honest git state.
+is_published() {
+    # Overridable so both transports are testable without a remote.
+    [ -n "${PROV_PUBLISHED:-}" ] && return $(( 1 - PROV_PUBLISHED ))
+    git -C "$HERE" rev-parse --verify --quiet origin/main >/dev/null 2>&1 || return 1
+    git -C "$HERE" merge-base --is-ancestor HEAD origin/main 2>/dev/null
+}
+
 remote_build() {
     local host=$1 plan=$2
-    local bundle=/tmp/op6t-$$.bundle
-    git -C "$HERE" bundle create "$bundle" main >/dev/null 2>&1 \
-        || die "could not create a git bundle"
+    local sha; sha=$(git -C "$HERE" rev-parse HEAD)
 
-    "$SCP_CMD" -q "$bundle" "$host:/tmp/op6t.bundle" || die "could not copy the bundle to $host"
-    "$SCP_CMD" -q "$plan"   "$host:/tmp/plan.json"   || die "could not copy the plan to $host"
-    rm -f "$bundle"
+    "$SCP_CMD" -q "$plan" "$host:/tmp/plan.json" || die "could not copy the plan to $host"
 
-    "$SSH_CMD" "$host" "cd $REMOTE_DIR && git fetch -q /tmp/op6t.bundle main && git reset -q --hard FETCH_HEAD" \
-        || die "could not update $host to this commit"
+    if is_published; then
+        "$SSH_CMD" "$host" "cd $REMOTE_DIR && git fetch -q origin && git reset -q --hard $sha" \
+            || die "could not update $host to $sha from origin"
+    else
+        # Deliberately unpushed work: carry the commits without publishing them.
+        local bundle=/tmp/op6t-$$.bundle
+        git -C "$HERE" bundle create "$bundle" HEAD >/dev/null 2>&1 \
+            || die "could not create a git bundle"
+        "$SCP_CMD" -q "$bundle" "$host:/tmp/op6t.bundle" || die "could not copy the bundle to $host"
+        rm -f "$bundle"
+        "$SSH_CMD" "$host" "cd $REMOTE_DIR && git fetch -q /tmp/op6t.bundle && git reset -q --hard FETCH_HEAD" \
+            || die "could not update $host from the bundle"
     "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./check-env.sh build" \
         || die "$host is missing build prerequisites"
     "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./build.sh --plan /tmp/plan.json" \
@@ -1654,7 +1691,7 @@ fi
 ./tests/run-tests.sh
 ```
 
-Expected: `passed=64 failed=0`.
+Expected: `passed=67 failed=0`.
 
 - [ ] **Step 5: Run it against the real worker**
 
@@ -1857,7 +1894,7 @@ chmod +x lib/phases.sh
 ./tests/run-tests.sh
 ```
 
-Expected: `passed=74 failed=0`.
+Expected: `passed=77 failed=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -1970,7 +2007,7 @@ phase_verify() {
 ./tests/run-tests.sh
 ```
 
-Expected: `passed=81 failed=0`.
+Expected: `passed=84 failed=0`.
 
 - [ ] **Step 5: Run the non-destructive phases on the real phone**
 
@@ -2119,7 +2156,7 @@ phase_data() {
 ./tests/run-tests.sh
 ```
 
-Expected: `passed=86 failed=0`.
+Expected: `passed=89 failed=0`.
 
 - [ ] **Step 5: Run it on the phone**
 
@@ -2235,7 +2272,7 @@ MSG
 ./tests/run-tests.sh
 ```
 
-Expected: `passed=91 failed=0`.
+Expected: `passed=94 failed=0`.
 
 - [ ] **Step 5: Dry-run against real hardware, writing nothing**
 
@@ -2321,7 +2358,7 @@ expect_contains "and says why" /tmp/nm.$$ 'no manifest'
 rm -f /tmp/pr-nm.$$ /tmp/nm.$$
 ```
 
-Expected after implementing: `passed=93 failed=0`.
+Expected after implementing: `passed=96 failed=0`.
 
 - [ ] **Step 3: The acceptance run**
 
