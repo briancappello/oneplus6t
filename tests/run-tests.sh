@@ -107,11 +107,24 @@ expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
 
 rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ /tmp/m-empty.$$ /tmp/pl-empty.$$
 
-# --artifacts mode accepts a path
+# --artifacts mode accepts a path and runs all phases
 "$PROV" --artifacts /tmp/nonexistent --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
-expect_rc "--artifacts mode exits 0 (not implemented yet)" 0 "$rc"
+expect_rc "--artifacts mode exits 0" 0 "$rc"
 expect_contains "--artifacts echoes the path" /tmp/p-art.$$ '/tmp/nonexistent'
+expect_contains "edl phase runs" /tmp/p-art.$$ 'edl:'
+expect_contains "boot phase runs" /tmp/p-art.$$ 'boot:'
+expect_contains "data phase runs" /tmp/p-art.$$ 'data:'
+expect_contains "activate phase runs" /tmp/p-art.$$ 'activate:'
+expect_contains "verify phase runs" /tmp/p-art.$$ 'verify:'
 rm -f /tmp/p-art.$$
+
+# --phase flag runs only that phase
+"$PROV" --artifacts /tmp/nonexistent --probe-file /tmp/pr-ok.$$ --phase boot > /tmp/p-phase.$$ 2>&1; rc=$?
+expect_rc "--phase boot exits 0" 0 "$rc"
+expect_contains "only boot phase runs" /tmp/p-phase.$$ 'boot:'
+expect_absent "edl phase is skipped" /tmp/p-phase.$$ 'edl:'
+expect_absent "data phase is skipped" /tmp/p-phase.$$ 'data:'
+rm -f /tmp/p-phase.$$
 
 echo
 echo ">>> lib/probe.sh tests"

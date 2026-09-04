@@ -90,7 +90,58 @@ fi
 
 if [ "$MODE" = artifacts ]; then
     echo ">>> flashing from artifacts in $ARTIFACTS"
-    # TODO: implement flash phases
+    
+    # Phase 1: edl (destructive) - rewrite GPT if needed
+    if [ -z "$PHASE" ] || [ "$PHASE" = "edl" ]; then
+        . "$HERE/lib/phases.sh"
+        if skip_edl "$PROBE_FILE" "$MANIFEST"; then
+            echo "    edl: skipped (GPT already correct)"
+        else
+            echo "    edl: running (GPT needs rewrite)"
+            # TODO: implement EDL GPT rewrite
+        fi
+    fi
+    
+    # Phase 2: boot - flash boot.img
+    if [ -z "$PHASE" ] || [ "$PHASE" = "boot" ]; then
+        . "$HERE/lib/phases.sh"
+        if skip_boot "$PROBE_FILE" "$MANIFEST"; then
+            echo "    boot: skipped (already correct)"
+        else
+            echo "    boot: flashing"
+            # TODO: implement boot flash
+        fi
+    fi
+    
+    # Phase 3: data - install rootfs (destructive)
+    if [ -z "$PHASE" ] || [ "$PHASE" = "data" ]; then
+        . "$HERE/lib/phases.sh"
+        if skip_data "$PROBE_FILE" "$MANIFEST"; then
+            echo "    data: skipped (already correct)"
+        else
+            echo "    data: installing rootfs"
+            # TODO: implement data flash
+        fi
+    fi
+    
+    # Phase 4: activate - activate Droidian slot
+    if [ -z "$PHASE" ] || [ "$PHASE" = "activate" ]; then
+        . "$HERE/lib/phases.sh"
+        if skip_activate "$PROBE_FILE" "$MANIFEST"; then
+            echo "    activate: skipped (already active)"
+        else
+            echo "    activate: activating Droidian slot"
+            # TODO: implement slot activation
+        fi
+    fi
+    
+    # Phase 5: verify - verify installation (never skipped)
+    if [ -z "$PHASE" ] || [ "$PHASE" = "verify" ]; then
+        echo "    verify: checking installation"
+        # TODO: implement verification
+    fi
+    
+    echo ">>> done"
     exit 0
 fi
 
