@@ -1,0 +1,4 @@
+/dev/binder
+/dev/input/event0
+/dev/input/event1
+/dev/dri/card0

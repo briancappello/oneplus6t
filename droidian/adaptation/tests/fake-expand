@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Expand a ueventd.rc path pattern against the fixture list instead of the real
+# /dev. The production expander globs against the device's own /dev, which is
+# correct at boot but would make these tests depend on whichever machine ran
+# them: this host has 30 /dev/input/* entries and 6 /dev/dri/*, the device has
+# neither set.
+set -uo pipefail
+while read -r n; do
+    [ -n "$n" ] || continue
+    case "$n" in $1) printf '%s\n' "$n" ;; esac
+done < "${FIX:?FIX must point at the fixtures directory}/existing.txt"

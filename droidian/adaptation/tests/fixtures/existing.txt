@@ -1,0 +1,14 @@
+/dev/binder
+/dev/hwbinder
+/dev/vndbinder
+/dev/dri/card0
+/dev/dri/renderD128
+/dev/diag
+/dev/input/event0
+/dev/input/event1
+/dev/kgsl-3d0
+/dev/ion
+/dev/qseecom
+/dev/subsys_modem
+/dev/ramdump_modem
+/dev/kmsg

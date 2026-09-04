@@ -1,0 +1,7 @@
+/dev/diag                 0660   system     oem_2901
+/dev/kgsl-3d0             0666   system     system
+/dev/ion                  0664   system     system
+/dev/qseecom              0660   system     drmrpc
+/dev/subsys_*         0640   system     system
+/dev/ramdump*             0640   system     system
+/dev/kmsg                                               0620   root       system
