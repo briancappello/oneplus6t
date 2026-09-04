@@ -97,6 +97,63 @@ rediscovered.
 | `oos11` (default) | OxygenOS 11.1.2.2 — `34.J.62` | 11, `RKQ1.201217.002` |
 | `oos9` | OxygenOS 9 — `34.O.24` | 9, `PKQ1.180716.001` |
 
+## Device states and transitions
+
+`./device.sh state` reports where the phone is; `./device.sh goto <state>`
+moves it there, prompting only when the transition genuinely needs hands.
+
+| State | USB ID | Reached over USB from |
+|---|---|---|
+| `droidian` | `0fce:7169` | fastboot, EDL |
+| `fastboot` | `18d1:d00d` | droidian, initramfs |
+| `edl` | `05c6:9008` | **droidian** (see below) |
+| `initramfs` | `18d1:d001` | — (a failed boot lands here) |
+| `ramdump` | `05c6:900e` | — (a panic lands here) |
+| `android` | varies | fastboot |
+| `off` | none | — |
+
+```
+                 systemctl --reboot-argument=bootloader reboot
+   droidian ─────────────────────────────────────────────────► fastboot
+      ▲   │                                                    │    ▲
+      │   │ systemctl --reboot-argument=edl reboot             │    │ reboot
+      │   └──────────────────────────────────────► edl         │    │ bootloader
+      │                                             │          │    │
+      └───────── edl reset ─────────────────────────┘          │  initramfs
+      ◄──────────────────── fastboot reboot ───────────────────┘
+```
+
+**EDL is reachable from a booted Droidian**, which is not obvious: this
+bootloader rejects `fastboot oem edl`, `oem enter-dload` and
+`reboot emergency`. But the *kernel's* restart handler accepts `edl` and calls
+`enable_emergency_dload_mode()` — `drivers/power/reset/msm-poweroff.c`, guarded
+by `CONFIG_QCOM_DLOAD_MODE=y`, which `fajita_defconfig` sets. Entirely
+different code path from the bootloader's refusal. Verified on hardware.
+
+### What still needs hands
+
+Only two things, and `device.sh` prompts for both rather than failing:
+
+- **Powered off → anything.** No software can wake it.
+- **`fastboot` → `edl` directly.** The bootloader refuses. `device.sh` routes
+  around it automatically by booting an OS first, which works whenever
+  something bootable exists.
+
+### Measured timings, and one trap
+
+| Transition | Time |
+|---|---|
+| `droidian` → `fastboot` | ~120–180 s |
+| `droidian` → `edl` | ~70 s |
+| `fastboot` → `droidian` | ~30 s to USB, ~40 s to sshd |
+| `edl reset` → `droidian` | ~20 s |
+
+Droidian's **shutdown** is slow, not its boot. During shutdown the old USB ID
+stays enumerated and the device keeps answering pings for up to two minutes.
+Never conclude a transition failed because the old ID is still present — poll
+for the *target* ID with a generous timeout. Getting this wrong makes a
+working transition look broken.
+
 ## Entering EDL
 
 1. Unplug USB.

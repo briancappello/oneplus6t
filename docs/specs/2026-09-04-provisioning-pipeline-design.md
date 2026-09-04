@@ -127,6 +127,34 @@ firehose in EDL, `getvar` in fastboot, ssh on a booted system.
 | booted Android | varies | adb |
 | powered off | none | prompt for the key combo |
 
+Implemented and **verified on hardware** in `device.sh`:
+`./device.sh state`, `./device.sh goto <state>`, `./device.sh wait <state>`.
+
+**Correction to the scope claim.** This pipeline cannot honestly promise "any
+state". It handles **any state reachable over USB**, and prompts for the rest.
+Two transitions genuinely need hands, and `device.sh` prompts then waits for
+the expected result rather than trusting the human:
+
+- **powered off → anything** — nothing in software can wake it.
+- **fastboot → EDL directly** — the bootloader rejects `oem edl`,
+  `oem enter-dload` and `reboot emergency`. Routed around automatically by
+  booting an OS first, which works whenever something bootable exists.
+
+**EDL from a booted Droidian works**, which was not obvious and is the unlock
+that makes the flash loop hands-free:
+`systemctl --reboot-argument=edl reboot`. The bootloader's refusal is
+irrelevant — the kernel's own restart handler accepts `edl` and calls
+`enable_emergency_dload_mode()` (`drivers/power/reset/msm-poweroff.c`, guarded
+by `CONFIG_QCOM_DLOAD_MODE=y`, set in our `fajita_defconfig`). Recovery is
+`edl reset`, also verified, and the on-disk fixes survive the round trip.
+
+**Trap the phase runner must respect.** During Droidian's shutdown the old USB
+ID stays enumerated and the device keeps answering pings for up to two
+minutes. Never infer failure from the old ID still being present; poll for the
+target ID. Measured: `droidian -> fastboot` 120-180 s (slow shutdown, not slow
+boot), `droidian -> edl` ~70 s, `fastboot -> droidian` ~30 s to USB and ~40 s
+to sshd, `edl reset -> droidian` ~20 s.
+
 ### `verify` enforces the invariant
 
 `verify` is the phase that makes the invariant real. It asserts the
