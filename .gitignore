@@ -28,3 +28,6 @@ droidian/kernel/
 droidian/out/
 droidian/local-repo/
 droidian-build-tools/
+droidian/stage/
+droidian/rootfs/
+droidian/userdata.img
