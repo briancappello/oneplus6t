@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Stands in for a real per-target build script. Records that it ran, in order,
+# and creates the artifacts it was told to, so build.sh can be exercised
+# end-to-end in milliseconds instead of twenty minutes.
+set -euo pipefail
+printf '%s\n' "${FT_NAME:?FT_NAME must be set}" >> "${FT_LOG:?FT_LOG must be set}"
+for out in ${FT_OUTPUTS:-}; do
+    mkdir -p "$(dirname "$out")"
+    printf 'artifact %s\n' "$FT_NAME" > "$out"
+done
+exit "${FT_RC:-0}"
