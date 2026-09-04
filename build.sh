@@ -45,19 +45,37 @@ run_target() {
 
     if [ -n "$FAKE_BUILD" ]; then
         FT_NAME="$name" FT_OUTPUTS="$out" "$FAKE_BUILD"
-        return
+    else
+        if [ -z "$out" ]; then
+            echo "build.sh: target '$name' has no output; nothing to do" >&2
+            return 1
+        fi
+        local src="$SRC/$tree"
+        [ -d "$src" ] || { echo "build.sh: source tree not found: $src" >&2; return 1; }
+        mkdir -p "$OUT/$(dirname "$out")"
+        echo "build.sh: building $name in $src -> $OUT/$out"
+        ( cd "$src" && bash -c "$cmd" )
     fi
 
-    if [ -z "$out" ]; then
-        echo "build.sh: target '$name' has no output; nothing to do" >&2
-        return 1
-    fi
+    write_manifest "$name" "$tree" "$out"
+}
 
-    local src="$SRC/$tree"
-    [ -d "$src" ] || { echo "build.sh: source tree not found: $src" >&2; return 1; }
-    mkdir -p "$OUT/$(dirname "$out")"
-    echo "build.sh: building $name in $src -> $OUT/$out"
-    ( cd "$src" && bash -c "$cmd" )
+# write_manifest <name> <tree> <output> — record the provenance of a finished
+# build. The manifest is the unit of trust: provision.sh later refuses to
+# flash an artifact whose manifest does not match the phone.
+write_manifest() {
+    local name="$1" tree="$2" out="$3" commit
+    commit="$(git -C "$SRC/$tree" rev-parse HEAD 2>/dev/null || echo unknown)"
+    mkdir -p "$OUT"
+    cat > "$OUT/manifest.json" <<EOF
+{
+  "name": "$name",
+  "source": "$tree",
+  "commit": "$commit",
+  "output": "$out",
+  "time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
 }
 
 # resolve_order <requested...> — print the build order, one topological level

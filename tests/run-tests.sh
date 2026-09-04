@@ -66,6 +66,18 @@ expect_contains "independent targets build in parallel" /tmp/b-order.$$ 'built: 
 built: kernel'
 rm -f /tmp/b-order.$$ /tmp/b-log.$$
 
+rm -rf /tmp/b-mout.$$ && mkdir -p /tmp/b-mout.$$
+out=$(OUT=/tmp/b-mout.$$ FAKE_BUILD="$ROOT/tests/fixtures/fake-target" FT_LOG=/tmp/b-log.$$ FT_RC=0 \
+      "$BUILD" rootfs 2>&1); rc=$?
+manifest="/tmp/b-mout.$$/manifest.json"
+expect_rc "manifest build" 0 "$rc"
+[ -f "$manifest" ] || { echo "  FAIL  manifest written: missing $manifest"; fail=$((fail+1)); }
+expect_contains "manifest names the target"    "$manifest" '"name": "rootfs"'
+expect_contains "manifest records the commit"  "$manifest" '"commit": "'
+expect_contains "manifest records the source"  "$manifest" '"source": "'
+expect_contains "manifest records the output"  "$manifest" '"output": "droidian/userdata.img"'
+rm -rf /tmp/b-mout.$$ /tmp/b-log.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
