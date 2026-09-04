@@ -23,3 +23,43 @@ if [ -e "$PLUG" ] || [ -e "$DISABLED/libgstcamerabin.so" ]; then
     fi
     echo "adaptation-oneplus-fajita: camerabin diverted -> $DISABLED"
 fi
+
+# Give Android a shutdown window.
+#
+# OxygenOS ships ro.build.shutdown_timeout=0 in /vendor/build.prop. Android's
+# init reads that as "do not wait", so on shutdown it goes straight to SIGKILL
+# on every vendor service:
+#
+#   init: Shutdown timeout: 0 ms
+#   init: Sending signal 9 to service 'vendor.qcrild' ...
+#   init: Sending signal 9 to service 'vendor.netmgrd' ...
+#
+# qcrild is what holds the modem's QMI clients. Killed outright, it never
+# releases them, so the modem cannot answer the kernel's sysmon shutdown
+# request, never sets its shutdown_ack bit, and gets force-halted with
+# rmnet_ipa0 still up -- which wedges that netdev and blocks anything touching
+# it in uninterruptible sleep. Shutdown took ~224s, nearly all of it waiting.
+#
+# With a window, init SIGTERMs first and Android reports finishing in ~3s
+# (powerctl_shutdown_time_ms:3188), and shutdown drops to ~49s.
+#
+# /vendor is read-only and the value is a ro. property, fixed when init starts,
+# so it cannot be set afterwards. Bind a patched copy over the container's view
+# of the file instead. This is the device's own build.prop with one line
+# changed; everything else is passed through untouched.
+LXC_DIR=/var/lib/lxc/android
+VENDOR_PROP="$LXC_DIR/rootfs/vendor/build.prop"
+OVERRIDE="$LXC_DIR/vendor-build.prop"
+ENTRY="lxc.mount.entry = $OVERRIDE vendor/build.prop none bind,ro 0 0"
+
+if [ -f "$VENDOR_PROP" ] && [ -f "$LXC_DIR/config" ]; then
+    if [ ! -f "$OVERRIDE" ] || [ "$VENDOR_PROP" -nt "$OVERRIDE" ]; then
+        sed 's/^ro\.build\.shutdown_timeout=0$/ro.build.shutdown_timeout=6/' \
+            "$VENDOR_PROP" > "$OVERRIDE"
+        echo "adaptation-oneplus-fajita: wrote $OVERRIDE"
+    fi
+    if ! grep -qF "vendor-build.prop" "$LXC_DIR/config"; then
+        printf '%s\n' "$ENTRY" >> "$LXC_DIR/config"
+        echo "adaptation-oneplus-fajita: bound patched build.prop into the container"
+    fi
+fi
