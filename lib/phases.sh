@@ -5,7 +5,11 @@
 # Skip predicates return 0 when the phase can be skipped, 1 otherwise.
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# NOTE: this file is sourced into its callers, so it must not define common
+# variable names. It previously set HERE, which silently overwrote the caller's
+# own HERE; the test harness then resolved its fixture paths against the repo
+# root and a phase retried against a device that was never going to answer.
+# Anything added here needs a scoped name or a `local`.
 
 load_probe() {
     local probe=$1
