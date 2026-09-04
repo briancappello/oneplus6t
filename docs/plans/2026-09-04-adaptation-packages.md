@@ -92,45 +92,88 @@ Tasks 2–4 testable without a device or root.
 
 - [ ] **Step 1: Create the ueventd fixtures**
 
-These are real lines taken from the device, chosen to cover every case: a node
-that is unreachable and must be fixed, nodes that are already reachable and
-must be left alone, and nodes matching the deny defaults.
+These are lines copied **verbatim** from the device, including their original
+file and their original whitespace, chosen to cover every case: nodes that are
+unreachable and must be fixed, nodes already reachable that must be left alone,
+nodes matching the deny defaults, a node declared twice in both files, and
+**glob declarations**.
 
-`droidian/adaptation/tests/fixtures/ueventd.rc`:
+The globs are not optional detail. On this device 33 of 264 `/dev` declarations
+are globs, and they include `/dev/input/*` and `/dev/dri/*` — the two the
+reachability invariant exists to protect. A fixture that flattened them to
+literal paths would leave the glob path, which is what actually runs on
+hardware, completely untested.
+
+`droidian/adaptation/tests/fixtures/ueventd.rc` (from `/android/ueventd.rc`):
 
 ```
-/dev/binder                0666   root       root
-/dev/hwbinder              0666   root       root
-/dev/vndbinder             0666   root       root
-/dev/kmsg                  0620   root       system
+/dev/binder               0666   root       root
+/dev/hwbinder             0666   root       root
+/dev/vndbinder            0666   root       root
+/dev/dri/*                0666   root       graphics
+/dev/diag                 0660   radio      radio
+/dev/input/*              0660   root       input
 ```
 
-`droidian/adaptation/tests/fixtures/vendor-ueventd.rc`:
+`droidian/adaptation/tests/fixtures/vendor-ueventd.rc` (from
+`/android/vendor/ueventd.rc` — note the irregular spacing, which is real):
 
 ```
-/dev/kgsl-3d0              0666   system     system
-/dev/ion                   0664   system     system
-/dev/input/event0          0660   root       input
-/dev/dri/card0             0666   root       graphics
-/dev/diag                  0660   system     oem_2901
-/dev/ramdump_modem         0640   system     system
-/dev/subsys_modem          0640   system     system
-/dev/qseecom               0660   system     drmrpc
+/dev/diag                 0660   system     oem_2901
+/dev/kgsl-3d0             0666   system     system
+/dev/ion                  0664   system     system
+/dev/qseecom              0660   system     drmrpc
+/dev/subsys_*         0640   system     system
+/dev/ramdump*             0640   system     system
+/dev/kmsg                                               0620   root       system
 ```
 
-- [ ] **Step 2: Create the reachability fixture**
+`/dev/diag` appears in **both** files with different owners. The vendor file is
+read first, so the vendor declaration must win and only one rule may be emitted.
 
-Nodes the fake probe treats as already reachable by the session user. This
-encodes the real device's state: touch and display work because udev already
-made them reachable through Debian-style groups.
+- [ ] **Step 2: Create the existence and reachability fixtures**
 
-`droidian/adaptation/tests/fixtures/reachable.txt`:
+Glob expansion must not touch the test host's `/dev`. This host has 30
+`/dev/input/*` entries and 6 `/dev/dri/*`; the device has different ones. A test
+whose output depends on the machine running it proves nothing, so expansion
+goes through a seam (`HHP_EXPAND_CMD`) backed by a fixture.
+
+`droidian/adaptation/tests/fixtures/existing.txt` — the nodes that exist on the
+device, i.e. what the globs expand to:
+
+```
+/dev/binder
+/dev/hwbinder
+/dev/vndbinder
+/dev/dri/card0
+/dev/dri/renderD128
+/dev/diag
+/dev/input/event0
+/dev/input/event1
+/dev/kgsl-3d0
+/dev/ion
+/dev/qseecom
+/dev/subsys_modem
+/dev/ramdump_modem
+/dev/kmsg
+```
+
+`droidian/adaptation/tests/fixtures/reachable.txt` — nodes the fake probe treats
+as already reachable by the session user. This encodes the real device's state:
+touch and display work because udev already made them reachable through
+Debian-style groups.
 
 ```
 /dev/binder
 /dev/input/event0
+/dev/input/event1
 /dev/dri/card0
 ```
+
+`/dev/dri/renderD128` is deliberately **absent** from this list. It is the only
+fixture node that is both declared under a subdirectory and unreachable, so it
+is what forces a rule to be emitted for a subdirectory node — which is how the
+`KERNEL=` sysname handling gets tested at all.
 
 - [ ] **Step 3: Write the test runner**
 
@@ -172,9 +215,14 @@ expect_absent() {   # expect_absent <name> <file> <string>
 }
 
 # A fake reachability probe: exits 0 when the node is listed in the fixture.
-export HHP_REACH_CMD="grep -qxF \$1 $FIX/reachable.txt"
+# $1 is quoted in every *_CMD because the generator substitutes it textually,
+# and an unquoted /dev/input/* would be glob-expanded by eval against THIS host.
+export HHP_REACH_CMD="grep -qxF \"\$1\" $FIX/reachable.txt"
 export HHP_UEVENTD_FILES="$FIX/vendor-ueventd.rc $FIX/ueventd.rc"
-export HHP_NODE_EXISTS_CMD="true"
+# A fake glob expander backed by a fixture, so the tests give the same answer on
+# every machine. The real one expands against the device's own /dev at boot.
+export FIX
+export HHP_EXPAND_CMD="$HERE/fake-expand \"\$1\""
 
 echo ">>> adaptation tests"
 # Task 2+ append their cases below this line.
@@ -184,10 +232,26 @@ echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
 ```
 
+- [ ] **Step 3b: Write the fake glob expander**
+
+`droidian/adaptation/tests/fake-expand`:
+
+```bash
+#!/usr/bin/env bash
+# Expand a ueventd.rc path pattern against the fixture list instead of the real
+# /dev. The production expander uses the shell's own globbing against the
+# device's /dev; this exists only so the tests are hermetic.
+set -uo pipefail
+while read -r n; do
+    [ -n "$n" ] || continue
+    case "$n" in $1) printf '%s\n' "$n" ;; esac
+done < "${FIX:?FIX must point at the fixtures directory}/existing.txt"
+```
+
 - [ ] **Step 4: Run it to confirm the harness itself works**
 
 ```bash
-chmod +x droidian/adaptation/tests/run-tests.sh
+chmod +x droidian/adaptation/tests/run-tests.sh droidian/adaptation/tests/fake-expand
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
@@ -231,8 +295,23 @@ expect_contains "ion is fixed" /tmp/hhp-out.$$ \
     'KERNEL=="ion", OWNER="system", GROUP="system", MODE="0664"'
 expect_absent "binder untouched (already reachable)" /tmp/hhp-out.$$ 'KERNEL=="binder"'
 expect_absent "input untouched (already reachable)" /tmp/hhp-out.$$ 'event0'
-expect_absent "dri untouched (already reachable)" /tmp/hhp-out.$$ 'card0'
+expect_absent "dri card0 untouched (already reachable)" /tmp/hhp-out.$$ 'card0'
 expect_absent "no inline comment after a rule" /tmp/hhp-out.$$ '" # '
+
+# Globs must expand, and expand from the FIXTURE, not this host's /dev.
+expect_contains "glob declaration expands (/dev/subsys_*)" /tmp/hhp-out.$$ \
+    'KERNEL=="subsys_modem"'
+expect_absent "expansion did not leak this host's /dev" /tmp/hhp-out.$$ 'event20'
+
+# udev matches KERNEL against the sysname. A subdirectory node must emit its
+# basename; KERNEL=="dri/renderD128" would match nothing and fail silently.
+expect_contains "subdir node emits bare sysname" /tmp/hhp-out.$$ \
+    'KERNEL=="renderD128", OWNER="root", GROUP="graphics", MODE="0666"'
+expect_absent "KERNEL is never a path" /tmp/hhp-out.$$ 'KERNEL=="dri/'
+
+# /dev/diag is declared in both files; the vendor file is read first and wins.
+expect_contains "vendor declaration wins for diag" /tmp/hhp-out.$$ \
+    'KERNEL=="diag", OWNER="system", GROUP="oem_2901"'
 rm -f /tmp/hhp-out.$$
 ```
 
@@ -271,12 +350,21 @@ Expected: FAIL on every case, because `generate-rules` does not exist yet.
 set -uo pipefail
 
 UEVENTD_FILES="${HHP_UEVENTD_FILES:-/android/vendor/ueventd.rc /android/ueventd.rc}"
-NODE_EXISTS_CMD="${HHP_NODE_EXISTS_CMD:-}"
 TARGET_USER="${HHP_TARGET_USER:-droidian}"
 
-node_exists() {
-    [ -n "$NODE_EXISTS_CMD" ] && { eval "$NODE_EXISTS_CMD"; return; }
-    [ -e "$1" ]
+# ueventd.rc declares many nodes as globs -- 33 of 264 on fajita, including
+# /dev/input/* and /dev/dri/*, the two the reachability invariant exists to
+# protect. Expansion is a seam so the offline tests can be hermetic: the real
+# expander globs against the device's own /dev, which is correct at boot but
+# would make a test depend on whichever machine ran it.
+expand() {
+    if [ -n "${HHP_EXPAND_CMD:-}" ]; then
+        eval "${HHP_EXPAND_CMD//\$1/$1}"
+        return 0
+    fi
+    local n
+    for n in $1; do [ -e "$n" ] && printf '%s\n' "$n"; done
+    return 0
 }
 
 reachable() {
@@ -300,17 +388,23 @@ for f in $UEVENTD_FILES; do
     [ -r "$f" ] || continue
     while read -r path mode uid gid _rest; do
         case "$path" in /dev/*) ;; *) continue ;; esac
-        for node in $path; do
-            node_exists "$node" || continue
+        while read -r node; do
+            [ -n "$node" ] || continue
             declared=$((declared + 1))
+            # First declaration wins. The vendor file is read first and
+            # /dev/diag is declared in both, with different owners.
             case " $emitted " in *" $node "*) continue ;; esac
             reachable "$node" && continue
             denied "$node" && continue
             emitted="$emitted $node"
+            # udev matches KERNEL against the SYSNAME, not the path under /dev.
+            # /dev/dri/card0 has sysname "card0", so stripping only the "/dev/"
+            # prefix would emit KERNEL=="dri/card0", which matches nothing and
+            # fails silently -- the exact failure mode this design forbids.
             printf '\n# ueventd.rc: %s %s %s %s\n' "$path" "$mode" "$uid" "$gid"
             printf 'ACTION=="add", KERNEL=="%s", OWNER="%s", GROUP="%s", MODE="%s"\n' \
-                   "${node#/dev/}" "$uid" "$gid" "$mode"
-        done
+                   "${node##*/}" "$uid" "$gid" "$mode"
+        done < <(expand "$path")
     done < "$f"
 done
 
@@ -335,7 +429,7 @@ chmod +x droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/g
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=7 failed=0`.
+Expected: `passed=11 failed=0`.
 
 - [ ] **Step 5: Commit**
 
@@ -453,7 +547,7 @@ denied() {
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=13 failed=0`.
+Expected: `passed=17 failed=0`.
 
 - [ ] **Step 6: Commit**
 
