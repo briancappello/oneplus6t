@@ -1,0 +1,33 @@
+diff --git a/drivers/block/loop.c b/drivers/block/loop.c
+index b4bb4d9f5..6b721d172 100644
+--- a/drivers/block/loop.c
++++ b/drivers/block/loop.c
+@@ -53,6 +53,7 @@
+ #include <linux/moduleparam.h>
+ #include <linux/sched.h>
+ #include <linux/fs.h>
++#include <linux/magic.h>
+ #include <linux/file.h>
+ #include <linux/stat.h>
+ #include <linux/errno.h>
+@@ -823,8 +824,20 @@ static void loop_config_discard(struct loop_device *lo)
+ 	 * image a.k.a. discard. However we do not support discard if
+ 	 * encryption is enabled, because it may give an attacker
+ 	 * useful information.
++	 *
++	 * ext4_punch_hole() is disabled tree-wide on this kernel (see
++	 * fs/ext4/inode.c, "Disabled as per b/28760453") and unconditionally
++	 * returns -EOPNOTSUPP, so a loop device backed by a file on ext4 can
++	 * never service a discard no matter what mount options are used.
++	 * ext4 still provides ->fallocate for allocation, so the check below
++	 * would otherwise advertise a capability that always fails: every
++	 * TRIM, including fstrim(8) on a loop-mounted rootfs, becomes a failed
++	 * request that blk_update_request logs as "I/O error, dev loop0".
++	 * That reads as failing storage and is not. Do not claim what the
++	 * backing filesystem cannot do.
+ 	 */
+ 	if ((!file->f_op->fallocate) ||
++	    inode->i_sb->s_magic == EXT4_SUPER_MAGIC ||
+ 	    lo->lo_encrypt_key_size) {
+ 		q->limits.discard_granularity = 0;
+ 		q->limits.discard_alignment = 0;

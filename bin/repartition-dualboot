@@ -12,4 +12,8 @@
 # plug in USB.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec env LAYOUT=dualboot PHASE=gpt python3 "$HERE/restore-android.py" "$@"
+# The repo venv, not the system python: restore-android.py imports edlclient,
+# which needs docopt and the rest of edl's dependencies. device.sh drives the
+# edl client the same way.
+exec env LAYOUT=dualboot PHASE=gpt "$HERE/.venv/bin/python" \
+    "$HERE/restore-android.py" "$@"
