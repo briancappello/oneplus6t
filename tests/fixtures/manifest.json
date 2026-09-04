@@ -1,0 +1,14 @@
+{
+  "generated": 1788545435,
+  "repo_commit": "cafe123",
+  "artifacts": {
+    "droidian/out/images/boot.img": {
+      "target": "kernel", "version": "", "sha256": "aaaa",
+      "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"
+    },
+    "droidian/userdata.img": {
+      "target": "rootfs", "version": "", "sha256": "bbbb",
+      "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"
+    }
+  }
+}

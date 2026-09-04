@@ -1,0 +1,7 @@
+{
+  "name": "rootfs",
+  "source": "droidian",
+  "commit": "unknown",
+  "output": "droidian/userdata.img",
+  "time": "2026-09-04T20:12:27Z"
+}

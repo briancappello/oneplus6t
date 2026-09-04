@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Probe the phone, decide what is needed, flash it, verify it.
+#
+#   ./provision.sh --plan-only > plan.json   # probe and decide; touch nothing
+#   ./provision.sh --artifacts ./out         # flash using prebuilt artifacts
+#   BUILD_HOST=taichi ./provision.sh         # build remotely, fetch, flash
+#   PHASE=boot ./provision.sh                # run a single phase
+#   VERIFY=1 ./provision.sh                  # full sha256 instead of cheap probes
+#
+# This never builds. It probes for real evidence and skips only what the device
+# demonstrably already has. No state file is written or trusted: such a record
+# lies the moment anything changes outside the pipeline, and this repo has been
+# bricked once already by believing a claim over reality.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANIFEST="${MANIFEST:-$HERE/droidian/manifest.json}"
+PROBE_FILE=""
+MODE=full
+
+die() { echo "provision.sh: $*" >&2; exit 1; }
+
+# Decide from evidence, never from a marker.
+decide_build() {
+    local probe=$1 manifest=$2
+    PROBE="$probe" MANIFEST="$manifest" python3 - <<'PY'
+import json, os, sys
+
+def load_probe(path):
+    facts = {}
+    with open(path) as fh:
+        for line in fh:
+            if "=" in line:
+                k, v = line.rstrip("\n").split("=", 1)
+                facts[k] = v
+    return facts
+
+facts = load_probe(os.environ["PROBE"])
+try:
+    man = json.load(open(os.environ["MANIFEST"]))
+except Exception:
+    man = {"artifacts": {}}
+
+ALL = ["kernel", "camera", "adaptation", "rootfs"]
+have = {a.get("target") for a in man.get("artifacts", {}).values()}
+
+# An unreadable device is not evidence that anything can be skipped, so an
+# incomplete probe asks for everything rather than guessing.
+if facts.get("probe_complete") != "yes":
+    print(" ".join(ALL)); raise SystemExit
+
+print(" ".join(t for t in ALL if t not in have))
+PY
+}
+
+emit_plan() {
+    local targets=$1
+    TARGETS="$targets" python3 - <<'PY'
+import json, os
+targets = os.environ["TARGETS"].split()
+print(json.dumps({"build": targets, "force": False}, indent=2, sort_keys=True))
+PY
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --plan-only)  MODE=plan; shift ;;
+        --probe-file) shift; PROBE_FILE="${1:?--probe-file needs a path}"; shift ;;
+        --manifest)   shift; MANIFEST="${1:?--manifest needs a path}"; shift ;;
+        -h|--help)    sed -n '2,16p' "$0"; exit 0 ;;
+        *) die "unknown argument: $1" ;;
+    esac
+done
+
+if [ -z "$PROBE_FILE" ]; then
+    PROBE_FILE=$(mktemp); trap 'rm -f "$PROBE_FILE"' EXIT
+    "$HERE/lib/probe.sh" probe_all > "$PROBE_FILE" || die "probe failed"
+fi
+
+if [ "$MODE" = plan ]; then
+    emit_plan "$(decide_build "$PROBE_FILE" "$MANIFEST")"
+    exit 0
+fi
+
+die "flash phases are not implemented yet (Tasks 10-13); use --plan-only"

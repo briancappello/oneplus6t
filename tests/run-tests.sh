@@ -79,6 +79,35 @@ expect_contains "manifest records the output"  "$manifest" '"output": "droidian/
 rm -rf /tmp/b-mout.$$ /tmp/b-log.$$
 
 echo
+echo ">>> provision.sh tests"
+
+PROV="$ROOT/provision.sh"
+
+# A complete probe with a manifest that has all targets should request nothing.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\n' > /tmp/pr-ok.$$
+"$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$HERE/fixtures/manifest.json" \
+    > /tmp/pl-ok.$$ 2>/dev/null
+python3 -c "import json;json.load(open('/tmp/pl-ok.$$'))" \
+    && { echo "  PASS  plan-only emits valid JSON"; pass=$((pass+1)); } \
+    || { echo "  FAIL  plan-only emits valid JSON"; fail=$((fail+1)); }
+expect_contains "plan has a build list" /tmp/pl-ok.$$ '"build"'
+
+# An incomplete probe must request everything, never skip.
+printf 'state=fastboot\nprobe_complete=no\n' > /tmp/pr-part.$$
+"$PROV" --plan-only --probe-file /tmp/pr-part.$$ --manifest "$HERE/fixtures/manifest.json" \
+    > /tmp/pl-part.$$ 2>/dev/null
+expect_contains "incomplete probe requests kernel" /tmp/pl-part.$$ 'kernel'
+expect_contains "incomplete probe requests rootfs" /tmp/pl-part.$$ 'rootfs'
+
+# A missing artifact is always requested.
+printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-empty.$$
+"$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest /tmp/m-empty.$$ \
+    > /tmp/pl-empty.$$ 2>/dev/null
+expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
+
+rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ /tmp/m-empty.$$ /tmp/pl-empty.$$
+
+echo
 echo ">>> lib/probe.sh tests"
 
 PROBE="$ROOT/lib/probe.sh"
