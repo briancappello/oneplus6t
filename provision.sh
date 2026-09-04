@@ -25,8 +25,8 @@ die() { echo "provision.sh: $*" >&2; exit 1; }
 # This script therefore has no notion of being under test. The suite shadows
 # those three names with fakes earlier on PATH, which makes reaching a real
 # device from a test impossible rather than merely discouraged. Checking whether
-# a device is actually attached and ready is the job of ./check-device.sh, not
-# of anything here.
+# a device is actually attached and in the right state is ./device.sh state,
+# not anything here.
 PATH="$PATH:$HERE/bin:$HERE/edl/.venv/bin"
 
 # Decide from evidence, never from a marker.

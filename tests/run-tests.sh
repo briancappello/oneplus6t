@@ -11,7 +11,7 @@ pass=0; fail=0
 # No test may reach a real phone. Fake fastboot/edl/device-ssh shadow the real
 # ones for every child process, so this is a property of the environment rather
 # than a flag each test has to remember. Whether a device is attached and ready
-# is a readiness question, answered by ./check-device.sh, never by this suite.
+# is a readiness question, answered by ./device.sh state, never by this suite.
 export PATH="$HERE/fixtures/bin:$PATH"
 export HW_LOG=/tmp/hw-log.$$
 : > "$HW_LOG"
