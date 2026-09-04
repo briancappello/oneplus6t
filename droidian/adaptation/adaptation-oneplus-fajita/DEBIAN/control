@@ -1,0 +1,11 @@
+Package: adaptation-oneplus-fajita
+Version: 1.0.0
+Architecture: all
+Maintainer: oneplus6t <https://github.com/briancappello/oneplus6t>
+Depends: halium-hostdev-perms, halium-oldkernel-compat, dpkg
+Section: admin
+Priority: optional
+Description: Device adaptation for the OnePlus 6T (fajita)
+ Pulls in the generic Halium fixes and applies the device-specific glue for
+ the OnePlus 6T. Explicitly fajita: upstream's oneplus6 packaging is ambiguous
+ about which of the 6 and 6T an image is for.

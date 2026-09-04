@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Device glue for fajita.
+#
+# Camera: Qt5 ships two camera mediaservice plugins and picks the wrong one.
+# libgstcamerabin.so (generic GStreamer) cannot link a source against a vendor
+# HAL and fails with "negotiation problem"; libaalcamera.so (libhybris/
+# droidmedia) works. Setting backend=aal in /etc/droidian-camera.conf is NOT
+# enough -- Qt resolves the service independently of the app's preference.
+#
+# The plugin must be diverted OUT of the scanned directory. Diverting it to
+# <plugin>.unused in place does nothing: QFactoryLoader scans the whole
+# directory and tries to load every file regardless of name.
+set -euo pipefail
+
+PLUGDIR=/usr/lib/aarch64-linux-gnu/qt5/plugins/mediaservice
+PLUG="$PLUGDIR/libgstcamerabin.so"
+DISABLED=/usr/lib/aarch64-linux-gnu/qt5/plugins-disabled
+
+if [ -e "$PLUG" ] || [ -e "$DISABLED/libgstcamerabin.so" ]; then
+    mkdir -p "$DISABLED"
+    if ! dpkg-divert --list | grep -q "plugins-disabled/libgstcamerabin"; then
+        dpkg-divert --add --rename --divert "$DISABLED/libgstcamerabin.so" "$PLUG"
+    fi
+    echo "adaptation-oneplus-fajita: camerabin diverted -> $DISABLED"
+fi

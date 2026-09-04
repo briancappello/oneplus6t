@@ -189,6 +189,15 @@ for c in "4.9-113-oneplus-fajita:fix" "5.0.9:fix" "5.1.0:skip" "6.1.0-13-arm64:s
     fi
 done
 
+# ---------------------------------------------------------------- Task 7
+# Both packages drop policy into the same directory. Check the device fragment
+# composes with the generic defaults instead of disturbing them.
+HHP_POLICY_DIRS="$ADAPT/halium-hostdev-perms/usr/lib/halium-hostdev-perms/policy.d $ADAPT/adaptation-oneplus-fajita/usr/lib/halium-hostdev-perms/policy.d" \
+    "$GEN" > /tmp/hhp-faj.$$ 2>/dev/null
+expect_contains "fajita fragment keeps hwbinder fixed" /tmp/hhp-faj.$$ 'KERNEL=="hwbinder"'
+expect_absent  "fajita fragment keeps diag denied"    /tmp/hhp-faj.$$ 'KERNEL=="diag"'
+rm -f /tmp/hhp-faj.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
