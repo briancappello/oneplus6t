@@ -90,7 +90,7 @@ Tasks 2–4 testable without a device or root.
   passed to `generate-rules` via `HHP_UEVENTD_FILES`, `HHP_POLICY_DIRS` and
   `HHP_REACH_CMD`.
 
-- [ ] **Step 1: Create the ueventd fixtures**
+- [x] **Step 1: Create the ueventd fixtures**
 
 These are lines copied **verbatim** from the device, including their original
 file and their original whitespace, chosen to cover every case: nodes that are
@@ -131,7 +131,7 @@ hardware, completely untested.
 `/dev/diag` appears in **both** files with different owners. The vendor file is
 read first, so the vendor declaration must win and only one rule may be emitted.
 
-- [ ] **Step 2: Create the existence and reachability fixtures**
+- [x] **Step 2: Create the existence and reachability fixtures**
 
 Glob expansion must not touch the test host's `/dev`. This host has 30
 `/dev/input/*` entries and 6 `/dev/dri/*`; the device has different ones. A test
@@ -175,7 +175,7 @@ fixture node that is both declared under a subdirectory and unreachable, so it
 is what forces a rule to be emitted for a subdirectory node — which is how the
 `KERNEL=` sysname handling gets tested at all.
 
-- [ ] **Step 3: Write the test runner**
+- [x] **Step 3: Write the test runner**
 
 `droidian/adaptation/tests/run-tests.sh`:
 
@@ -232,7 +232,7 @@ echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
 ```
 
-- [ ] **Step 3b: Write the fake glob expander**
+- [x] **Step 3b: Write the fake glob expander**
 
 `droidian/adaptation/tests/fake-expand`:
 
@@ -248,7 +248,7 @@ while read -r n; do
 done < "${FIX:?FIX must point at the fixtures directory}/existing.txt"
 ```
 
-- [ ] **Step 4: Run it to confirm the harness itself works**
+- [x] **Step 4: Run it to confirm the harness itself works**
 
 ```bash
 chmod +x droidian/adaptation/tests/run-tests.sh droidian/adaptation/tests/fake-expand
@@ -257,7 +257,7 @@ chmod +x droidian/adaptation/tests/run-tests.sh droidian/adaptation/tests/fake-e
 
 Expected: prints `>>> adaptation tests` then `passed=0 failed=0` and exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add droidian/adaptation/tests
@@ -278,7 +278,7 @@ git commit -m "test(adaptation): offline harness and ueventd fixtures"
   stdout. Task 5's systemd unit calls it as
   `generate-rules > /etc/udev/rules.d/70-halium-hostdev-perms.rules`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `droidian/adaptation/tests/run-tests.sh`, above the final `echo`:
 
@@ -315,7 +315,7 @@ expect_contains "vendor declaration wins for diag" /tmp/hhp-out.$$ \
 rm -f /tmp/hhp-out.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./droidian/adaptation/tests/run-tests.sh
@@ -323,7 +323,7 @@ rm -f /tmp/hhp-out.$$
 
 Expected: FAIL on every case, because `generate-rules` does not exist yet.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/generate-rules`:
 
@@ -422,7 +422,7 @@ temporary stub immediately above `declared=0` so this task's tests pass:
 denied() { return 1; }   # replaced in Task 3
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 chmod +x droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/generate-rules
@@ -433,7 +433,7 @@ Expected: `passed=10 failed=1`. The one remaining failure is
 `subdir node emits bare sysname`, which asserts `GROUP="android_graphics"` —
 that mapping arrives in Task 2b. Every other case passes here.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add droidian/adaptation/halium-hostdev-perms droidian/adaptation/tests/run-tests.sh
@@ -478,7 +478,7 @@ and it would affect the majority of emitted rules.
 
 Mapping grants nothing new: `droidian` is already a member of these groups.
 
-- [ ] **Step 1: Extend the fixtures**
+- [x] **Step 1: Extend the fixtures**
 
 Append to `tests/fixtures/vendor-ueventd.rc` (verbatim device lines — note
 `byte-cntr`'s irregular single space, which is real):
@@ -510,7 +510,7 @@ system
 radio
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Capture stderr, since the skips are asserted:
 
@@ -536,7 +536,7 @@ The last case is the one that proves rule 3: the vendor declaration
 (`system:oem_2901`) is unusable, so the base declaration (`radio:radio`) applies
 instead of the node being dropped.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add the seams and resolver above `denied`:
 
@@ -583,7 +583,7 @@ In the emit loop, after the `denied` check and **before** `emitted` is updated:
 Emit `"$ruid"` / `"$rgid"`, and keep the unresolved original in the provenance
 comment so the mapping is visible in the generated file.
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 ```bash
 ./droidian/adaptation/tests/run-tests.sh
@@ -591,7 +591,7 @@ comment so the mapping is visible in the generated file.
 
 Expected: `passed=17 failed=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add droidian/adaptation
@@ -612,7 +612,7 @@ git commit -m "feat(adaptation): resolve Android group names to Droidian's andro
 - Produces: `denied()` honouring `HHP_POLICY_DIRS`. Task 7 ships
   `50-fajita.conf` into the same directory.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `run-tests.sh` above the final `echo`:
 
@@ -659,7 +659,7 @@ rm -rf "$tmp_root" /tmp/hhp-ord.$$ /tmp/hhp-mask.$$
 The basename case is not hypothetical: with the merged list sorted by path it
 fails, which was confirmed by reverting the function and re-running.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./droidian/adaptation/tests/run-tests.sh
@@ -667,7 +667,7 @@ fails, which was confirmed by reverting the function and re-running.
 
 Expected: the four deny/allow cases FAIL (`denied()` is still the stub).
 
-- [ ] **Step 3: Write the policy file**
+- [x] **Step 3: Write the policy file**
 
 `droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/policy.d/10-defaults.conf`:
 
@@ -682,7 +682,7 @@ deny /dev/ramdump_*
 deny /dev/subsys_*
 ```
 
-- [ ] **Step 4: Replace the stub with the real implementation**
+- [x] **Step 4: Replace the stub with the real implementation**
 
 In `generate-rules`, replace `denied() { return 1; }` with:
 
@@ -724,7 +724,7 @@ denied() {
 }
 ```
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes**
 
 ```bash
 ./droidian/adaptation/tests/run-tests.sh
@@ -732,7 +732,7 @@ denied() {
 
 Expected: `passed=25 failed=0`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add droidian/adaptation
@@ -755,7 +755,7 @@ working node to be reverted."
 - Consumes: `generate-rules`.
 - Produces: nothing new; guards a defect that already occurred once.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 A rule with a trailing inline comment is silently discarded by udev, and
 `udevadm control --reload-rules` reports nothing. This cost a debugging cycle
@@ -794,7 +794,7 @@ Running verify **with** name resolution on a build host prints
 of why Task 2b exists: udev applies the rest of the rule and drops only the
 group, so an unresolved name half-applies and reports nothing.
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 ```bash
 ./droidian/adaptation/tests/run-tests.sh
@@ -803,7 +803,7 @@ group, so an unresolved name half-applies and reports nothing.
 Expected: `passed=27 failed=0`. If verify fails, the generator is emitting
 invalid syntax — fix the generator, not the test.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add droidian/adaptation/tests/run-tests.sh
@@ -827,7 +827,7 @@ reports nothing, so only udevadm verify catches it."
 - Consumes: `generate-rules` from Tasks 2–3.
 - Produces: a `.deb` tree ready for `dpkg-deb --build`, consumed by Task 8.
 
-- [ ] **Step 1: Write the control file**
+- [x] **Step 1: Write the control file**
 
 ```
 Package: halium-hostdev-perms
@@ -849,7 +849,7 @@ Description: Restore Android /dev permissions on the host for Halium devices
  device-specific knowledge and works on any Halium device.
 ```
 
-- [ ] **Step 2: Write the systemd unit**
+- [x] **Step 2: Write the systemd unit**
 
 Ordering is verified: `systemd-udev-settle` -> `android-mount.service` (mounts
 `/android/vendor`) -> `lxc@android.service` -> `android-service@hwcomposer` ->
@@ -874,7 +874,7 @@ ExecStart=/usr/lib/halium-hostdev-perms/apply
 WantedBy=multi-user.target
 ```
 
-- [ ] **Step 3: Write the apply wrapper**
+- [x] **Step 3: Write the apply wrapper**
 
 Create `droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/apply`:
 
@@ -915,7 +915,7 @@ done
 udevadm settle
 ```
 
-- [ ] **Step 4: Create the enablement symlink**
+- [x] **Step 4: Create the enablement symlink**
 
 Shipped as a file because the package has no maintainer scripts to run
 `systemctl enable`.
@@ -927,7 +927,7 @@ ln -sf /usr/lib/systemd/system/halium-hostdev-perms.service \
 chmod +x droidian/adaptation/halium-hostdev-perms/usr/lib/halium-hostdev-perms/apply
 ```
 
-- [ ] **Step 5: Assert there are no maintainer scripts**
+- [x] **Step 5: Assert there are no maintainer scripts**
 
 ```bash
 ls droidian/adaptation/halium-hostdev-perms/DEBIAN/
@@ -936,7 +936,7 @@ ls droidian/adaptation/halium-hostdev-perms/DEBIAN/
 Expected: exactly `control`. If `postinst`/`preinst`/`prerm`/`postrm` appear,
 `dpkg --root` would need qemu and the install seam breaks.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add droidian/adaptation/halium-hostdev-perms
@@ -963,7 +963,7 @@ file so dpkg --root needs no qemu."
 - Consumes: nothing.
 - Produces: a `.deb` tree for Task 8.
 
-- [ ] **Step 1: Write the control file**
+- [x] **Step 1: Write the control file**
 
 ```
 Package: halium-oldkernel-compat
@@ -983,7 +983,7 @@ Description: Make polkit authenticate on kernels without pidfd
  what the helper itself asks for. It is a no-op on kernels 5.1 and newer.
 ```
 
-- [ ] **Step 2: Write the apply script**
+- [x] **Step 2: Write the apply script**
 
 ```bash
 #!/usr/bin/env bash
@@ -1016,7 +1016,7 @@ fi
 echo "halium-oldkernel-compat: $(stat -c '%A %U:%G' "$HELPER")"
 ```
 
-- [ ] **Step 3: Write the unit**
+- [x] **Step 3: Write the unit**
 
 ```ini
 [Unit]
@@ -1033,7 +1033,7 @@ ExecStart=/usr/lib/halium-oldkernel-compat/apply
 WantedBy=multi-user.target
 ```
 
-- [ ] **Step 4: Create the symlinks**
+- [x] **Step 4: Create the symlinks**
 
 The socket mask is a systemd mask expressed as a shipped file, so it needs no
 maintainer script.
@@ -1048,7 +1048,7 @@ chmod +x usr/lib/halium-oldkernel-compat/apply
 cd -
 ```
 
-- [ ] **Step 4b: Test the kernel version gate**
+- [x] **Step 4b: Test the kernel version gate**
 
 Append to `run-tests.sh`. `HOKC_HELPER` points at a missing file so the script
 stops just after the gate, needing no root and no `dpkg-statoverride`:
@@ -1073,7 +1073,7 @@ done
 
 Expected: `passed=31 failed=0`.
 
-- [ ] **Step 5: Verify the mask symlink points at /dev/null**
+- [x] **Step 5: Verify the mask symlink points at /dev/null**
 
 ```bash
 readlink droidian/adaptation/halium-oldkernel-compat/etc/systemd/system/polkit-agent-helper.socket
@@ -1081,7 +1081,7 @@ readlink droidian/adaptation/halium-oldkernel-compat/etc/systemd/system/polkit-a
 
 Expected: `/dev/null`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add droidian/adaptation/halium-oldkernel-compat
@@ -1107,7 +1107,7 @@ is a no-op on 5.1+."
 - Consumes: the `policy.d` directory from Task 3.
 - Produces: a `.deb` tree for Task 8.
 
-- [ ] **Step 1: Write the control file**
+- [x] **Step 1: Write the control file**
 
 ```
 Package: adaptation-oneplus-fajita
@@ -1123,7 +1123,7 @@ Description: Device adaptation for the OnePlus 6T (fajita)
  about which of the 6 and 6T an image is for.
 ```
 
-- [ ] **Step 2: Write the device policy fragment**
+- [x] **Step 2: Write the device policy fragment**
 
 ```
 # Device policy for fajita. Nothing to add beyond the generic defaults yet;
@@ -1131,7 +1131,7 @@ Description: Device adaptation for the OnePlus 6T (fajita)
 # that does not collide with the generic package's 10-defaults.conf.
 ```
 
-- [ ] **Step 3: Write the apply script**
+- [x] **Step 3: Write the apply script**
 
 ```bash
 #!/usr/bin/env bash
@@ -1161,7 +1161,7 @@ if [ -e "$PLUG" ] || [ -e "$DISABLED/libgstcamerabin.so" ]; then
 fi
 ```
 
-- [ ] **Step 4: Write the unit and symlink**
+- [x] **Step 4: Write the unit and symlink**
 
 ```ini
 [Unit]
@@ -1186,7 +1186,7 @@ chmod +x usr/lib/adaptation-oneplus-fajita/apply
 cd -
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add droidian/adaptation/adaptation-oneplus-fajita
@@ -1208,7 +1208,7 @@ double-tap work still outstanding. Depends on the two generic packages."
 - Consumes: the three package trees from Tasks 5–7.
 - Produces: `droidian/out-adaptation/*.deb`, consumed by Task 9.
 
-- [ ] **Step 1: Write the build script**
+- [x] **Step 1: Write the build script**
 
 ```bash
 #!/usr/bin/env bash
@@ -1261,7 +1261,7 @@ for f in "$OUT"/*.deb; do
 done
 ```
 
-- [ ] **Step 2: Ignore the output directory**
+- [x] **Step 2: Ignore the output directory**
 
 Append to `.gitignore`:
 
@@ -1269,7 +1269,7 @@ Append to `.gitignore`:
 droidian/out-adaptation/
 ```
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 ```bash
 chmod +x droidian/adaptation/build-adaptation.sh
@@ -1278,7 +1278,7 @@ chmod +x droidian/adaptation/build-adaptation.sh
 
 Expected: tests pass, then three `.deb` files listed.
 
-- [ ] **Step 4: Verify the packages contain no maintainer scripts**
+- [x] **Step 4: Verify the packages contain no maintainer scripts**
 
 ```bash
 for f in droidian/out-adaptation/*.deb; do
@@ -1289,7 +1289,7 @@ done
 Expected: each lists only `./`, `./control` and `./md5sums`. Any `postinst`
 means the rootfs install seam in Task 9 will need qemu and will fail.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add droidian/adaptation/build-adaptation.sh .gitignore
@@ -1312,7 +1312,7 @@ since a maintainer script would silently break dpkg --root."
   `droidian/out-camera/*.deb` (already built).
 - Produces: a `userdata.img` whose rootfs already contains all four fixes.
 
-- [ ] **Step 1: Add the install step**
+- [x] **Step 1: Add the install step**
 
 In `droidian/build-rootfs.sh`, after the `resize2fs` block and the
 `android-rootfs.img` symlink, before `# ---- pack`, insert:
@@ -1395,7 +1395,7 @@ fusermount3 -u /mnt/rootfs
 fi
 ```
 
-- [ ] **Step 2: Assert the packages really landed**
+- [x] **Step 2: Assert the packages really landed**
 
 Immediately after the block above, add:
 
@@ -1416,7 +1416,7 @@ if [ "${ADAPTATION:-1}" = 1 ]; then
 fi
 ```
 
-- [ ] **Step 2b: Prove the assert can actually fail**
+- [x] **Step 2b: Prove the assert can actually fail**
 
 A check that cannot fail is not a check. Confirm the `grep '^Inode:'` form
 rejects an absent package, which the exit-code form did not:
@@ -1428,7 +1428,7 @@ debugfs -R "stat /var/lib/dpkg/info/no-such-package.list" \
 
 Expected: `0`. If this prints non-zero, the assert is still blind.
 
-- [ ] **Step 3: Build with the packages**
+- [x] **Step 3: Build with the packages**
 
 ```bash
 ./droidian/build-rootfs.sh
@@ -1437,7 +1437,7 @@ Expected: `0`. If this prints non-zero, the assert is still blind.
 Expected: the `dpkg --root -l` output lists all four packages as `ii`,
 `--audit` prints nothing, and the verification step reports success.
 
-- [ ] **Step 4: Confirm the escape hatch still works**
+- [x] **Step 4: Confirm the escape hatch still works**
 
 ```bash
 ADAPTATION=0 ./droidian/build-rootfs.sh
@@ -1445,7 +1445,7 @@ ADAPTATION=0 ./droidian/build-rootfs.sh
 
 Expected: skips the install entirely, producing a stock image for comparison.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add droidian/build-rootfs.sh
