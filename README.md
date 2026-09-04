@@ -498,6 +498,23 @@ check (`account droidian has password changed in future`), and makes journald lo
 `Time jumped backwards, rotating` and discard boots — which destroyed the
 evidence for a separate bug.
 
+**The RTC cannot be made to hold real time.** Setting
+`qcom,qpnp-rtc-write = <1>` in `pm8998.dtsi` does make the driver register
+`.set_time` — the error moves from `EINVAL` to `ENODEV` — but `set_time` starts
+by disabling the RTC control register and the SPMI write is denied at the bus
+level:
+
+```
+qcom,qpnp-rtc: SPMI write failed
+qcom,qpnp-rtc: Disabling of RTC control reg failed with error:-19
+```
+
+Reads work, and other PMIC peripherals (the LEDs) are writable, so SPMI itself
+is fine — this peripheral is owned by the secure world, which is why OnePlus
+ships the property as `<0>`. SPMI ownership is set by the bootloader/TZ and no
+device tree change can grant it. Tested on hardware; the patch was reverted.
+Accurate time has to come from the network.
+
 `adaptation-clock-floor.service` runs **after** timekeeper, raises the clock to
 the package build time if timekeeper restored something implausible, and hands
 the corrected value straight back to `timekeeper store`. Forward-only, so it
