@@ -636,7 +636,28 @@ printf 'allow /dev/input/event0\n' >> "$tmp_pol/90-local.conf"
 HHP_POLICY_DIRS="$tmp_pol" "$GEN" > /tmp/hhp-allow2.$$ 2>/dev/null
 expect_absent "allow cannot revert a reachable node" /tmp/hhp-allow2.$$ 'event0'
 rm -rf "$tmp_pol" /tmp/hhp-pol.$$ /tmp/hhp-allow.$$ /tmp/hhp-allow2.$$
+
+# Precedence is by BASENAME across all dirs, not by path. Dir "a" is searched
+# first (it stands for /usr/lib) and holds the LATER basename, so sorting the
+# merged list by path instead would apply 50-mid before 10-early and invert the
+# result. Basename order is 10-early (deny) then 50-mid (allow) -> allow wins.
+tmp_root=$(mktemp -d); mkdir -p "$tmp_root/a" "$tmp_root/b"
+printf 'allow /dev/diag\n' > "$tmp_root/a/50-mid.conf"
+printf 'deny /dev/diag\n'  > "$tmp_root/b/10-early.conf"
+HHP_POLICY_DIRS="$tmp_root/a $tmp_root/b" "$GEN" > /tmp/hhp-ord.$$ 2>/dev/null
+expect_contains "precedence is by basename, not by path" /tmp/hhp-ord.$$ 'KERNEL=="diag"'
+
+# A same-named file in the later dir masks the earlier one, systemd-style.
+printf 'deny /dev/qseecom\n'  > "$tmp_root/a/20-mask.conf"
+printf 'allow /dev/qseecom\n' > "$tmp_root/b/20-mask.conf"
+HHP_POLICY_DIRS="$tmp_root/a $tmp_root/b" "$GEN" > /tmp/hhp-mask.$$ 2>/dev/null
+expect_contains "same-named file in the later dir masks the earlier" \
+    /tmp/hhp-mask.$$ 'KERNEL=="qseecom"'
+rm -rf "$tmp_root" /tmp/hhp-ord.$$ /tmp/hhp-mask.$$
 ```
+
+The basename case is not hypothetical: with the merged list sorted by path it
+fails, which was confirmed by reverting the function and re-running.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -670,12 +691,19 @@ POLICY_DIRS="${HHP_POLICY_DIRS-/usr/lib/halium-hostdev-perms/policy.d /etc/haliu
 
 # Later files win; a same-named file in /etc masks the one in /usr/lib, which
 # is the systemd drop-in convention.
+#
+# Ordering is by BASENAME the whole way through. Sorting the final list by full
+# path would put /etc/.../90-local.conf before /usr/lib/.../10-defaults.conf and
+# silently invert the documented precedence.
 policy_files() {
-    local d f seen=""
+    local d f
     for d in $POLICY_DIRS; do
         [ -d "$d" ] || continue
-        for f in "$d"/*.conf; do [ -e "$f" ] && echo "$(basename "$f") $f"; done
-    done | sort -k1,1 -s | awk '{ m[$1]=$2 } END { for (k in m) print m[k] }' | sort
+        for f in "$d"/*.conf; do
+            [ -e "$f" ] && printf '%s %s\n' "$(basename "$f")" "$f"
+        done
+    done | sort -k1,1 -s | awk '{ m[$1]=$2 } END { for (k in m) print k, m[k] }' \
+         | sort -k1,1 | cut -d' ' -f2-
 }
 
 # deny/allow are evaluated in order; the last match wins. allow only removes a
@@ -702,7 +730,7 @@ denied() {
 ./droidian/adaptation/tests/run-tests.sh
 ```
 
-Expected: `passed=23 failed=0`.
+Expected: `passed=25 failed=0`.
 
 - [ ] **Step 6: Commit**
 

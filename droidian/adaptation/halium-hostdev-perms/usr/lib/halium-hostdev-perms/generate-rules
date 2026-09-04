@@ -75,7 +75,41 @@ resolve_name() {   # resolve_name <exists-fn> <name>
     return 1
 }
 
-denied() { return 1; }   # replaced in Task 3
+POLICY_DIRS="${HHP_POLICY_DIRS-/usr/lib/halium-hostdev-perms/policy.d /etc/halium-hostdev-perms/policy.d}"
+
+# Later files win; a same-named file in /etc masks the one in /usr/lib, which
+# is the systemd drop-in convention.
+#
+# Ordering is by BASENAME the whole way through. Sorting the final list by full
+# path would put /etc/.../90-local.conf before /usr/lib/.../10-defaults.conf and
+# silently invert the documented precedence.
+policy_files() {
+    local d f
+    for d in $POLICY_DIRS; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*.conf; do
+            [ -e "$f" ] && printf '%s %s\n' "$(basename "$f")" "$f"
+        done
+    done | sort -k1,1 -s | awk '{ m[$1]=$2 } END { for (k in m) print k, m[k] }' \
+         | sort -k1,1 | cut -d' ' -f2-
+}
+
+# deny/allow are evaluated in order; the last match wins. allow only removes a
+# deny -- it can never override the reachability test in the main loop.
+denied() {
+    local node=$1 verdict=1 f rule pat
+    while read -r f; do
+        [ -r "$f" ] || continue
+        while read -r rule pat _; do
+            case "$rule" in ''|'#'*) continue ;; esac
+            # shellcheck disable=SC2254
+            case "$node" in
+                $pat) [ "$rule" = deny ] && verdict=0 || verdict=1 ;;
+            esac
+        done < "$f"
+    done < <(policy_files)
+    return $verdict
+}
 
 declared=0
 printf '# Generated from the device'"'"'s own ueventd.rc - do not hand-edit.\n'
