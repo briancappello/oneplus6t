@@ -890,19 +890,27 @@ trap 'rm -f "$TMP"' EXIT
 
 /usr/lib/halium-hostdev-perms/generate-rules > "$TMP"
 
-if command -v udevadm >/dev/null && ! udevadm verify "$TMP" >/dev/null 2>&1; then
-    echo "generated rules failed udevadm verify; refusing to install" >&2
-    udevadm verify "$TMP" >&2 || true
-    exit 1
+# Names ARE resolvable here -- this is the device -- so verify with resolution
+# on. An unresolvable user or group would mean the rule half-applies, and
+# generate-rules should already have skipped it.
+if command -v udevadm >/dev/null && udevadm verify --help >/dev/null 2>&1; then
+    if ! udevadm verify "$TMP" >/dev/null 2>&1; then
+        echo "generated rules failed udevadm verify; refusing to install" >&2
+        udevadm verify "$TMP" >&2 || true
+        exit 1
+    fi
 fi
 
 install -m 0644 "$TMP" "$RULES"
 udevadm control --reload-rules
 
-# Trigger only the nodes we actually named, then log what changed.
+# Trigger only the nodes we actually named, then log what changed. KERNEL is a
+# sysname, so find the node by sysname rather than assuming /dev/<sysname>:
+# /dev/dri/card0 and /dev/input/event0 both live in a subdirectory.
 grep -oE 'KERNEL=="[^"]+"' "$RULES" | cut -d'"' -f2 | while read -r k; do
     udevadm trigger --action=add --sysname-match="$k" || true
-    echo "halium-hostdev-perms: $k -> $(stat -c '%a %U:%G' "/dev/$k" 2>/dev/null || echo absent)"
+    node=$(find /dev -maxdepth 2 -name "$k" 2>/dev/null | head -1)
+    echo "halium-hostdev-perms: $k -> $(stat -c '%a %U:%G' "${node:-/dev/$k}" 2>/dev/null || echo absent)"
 done
 udevadm settle
 ```

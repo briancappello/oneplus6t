@@ -1,0 +1,17 @@
+Package: halium-hostdev-perms
+Version: 1.0.0
+Architecture: all
+Maintainer: oneplus6t <https://github.com/briancappello/oneplus6t>
+Depends: udev
+Section: admin
+Priority: optional
+Description: Restore Android /dev permissions on the host for Halium devices
+ The Android container gets a private tmpfs /dev, so ueventd applies the
+ vendor's modes only inside it. The host /dev is driven by udev, whose
+ Android rules predate Treble and cover binder but not hwbinder, vndbinder,
+ the GPU or ion. Host-side clients such as the compositor cannot then reach
+ the HIDL composer, and the display stays black.
+ .
+ This package derives the correct rules from the device's own ueventd.rc at
+ boot, limited to nodes the session user cannot already reach. It contains no
+ device-specific knowledge and works on any Halium device.

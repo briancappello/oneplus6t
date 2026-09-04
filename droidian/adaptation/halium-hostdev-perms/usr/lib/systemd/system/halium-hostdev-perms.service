@@ -1,0 +1,16 @@
+[Unit]
+Description=Restore Android /dev permissions on the host
+Documentation=https://github.com/briancappello/oneplus6t
+# ueventd.rc lives on /android/vendor, mounted by android-mount.service.
+After=android-mount.service
+# Must finish before anything opens the nodes.
+Before=lxc@android.service
+ConditionPathExists=/android/ueventd.rc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/halium-hostdev-perms/apply
+
+[Install]
+WantedBy=multi-user.target
