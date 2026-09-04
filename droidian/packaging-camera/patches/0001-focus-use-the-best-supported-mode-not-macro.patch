@@ -1,0 +1,54 @@
+diff --git a/src/qml/main.qml b/src/qml/main.qml
+index 8408ef5..57b3267 100644
+--- a/src/qml/main.qml
++++ b/src/qml/main.qml
+@@ -244,10 +244,22 @@ ApplicationWindow {
+         property var aspWide: 0
+ 
+         focus {
+-            focusMode: Camera.FocusMacro
++            focusMode: Camera.FocusContinuous
+             focusPointMode: Camera.FocusPointCustom
+         }
+ 
++        // Not every camera HAL advertises every focus mode, so pick the best one
++        // it actually supports instead of assuming. Continuous keeps distant
++        // subjects sharp, auto is a single sweep, and macro only focuses a few
++        // inches out -- which is why it must never be the default.
++        function bestFocusMode() {
++            if (focus.isFocusModeSupported(Camera.FocusContinuous))
++                return Camera.FocusContinuous
++            if (focus.isFocusModeSupported(Camera.FocusAuto))
++                return Camera.FocusAuto
++            return Camera.FocusMacro
++        }
++
+         imageProcessing {
+             denoisingLevel: 1.0
+             sharpeningLevel: 1.0
+@@ -294,6 +306,13 @@ ApplicationWindow {
+             if (camera.cameraStatus == Camera.LoadedStatus) {
+                 window.fnAspectRatio()
+             }
++
++            // The declarative focusMode above is evaluated before the backend is
++            // ready, so re-apply it once the camera is actually running -- and
++            // fall back if this HAL does not support continuous focus.
++            if (camera.cameraStatus == Camera.ActiveStatus) {
++                camera.focus.focusMode = camera.bestFocusMode()
++            }
+         }
+ 
+         onDeviceIdChanged: {
+@@ -421,7 +440,10 @@ ApplicationWindow {
+                     }
+                 } else {
+                     camera.focus.customFocusPoint = Qt.point(mouse.x / dragArea.width, mouse.y / dragArea.height)
+-                    camera.focus.focusMode = Camera.FocusMacro
++                    // Tap-to-focus needs a full-range sweep, not a macro-limited
++                    // one, or tapping a distant subject cannot bring it in.
++                    camera.focus.focusMode = camera.focus.isFocusModeSupported(Camera.FocusAuto)
++                                             ? Camera.FocusAuto : Camera.FocusMacro
+                     focusPointRect.width = 60
+                     focusPointRect.height = 60
+                     focusPointRect.visible = true

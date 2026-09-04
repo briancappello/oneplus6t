@@ -34,3 +34,7 @@ droidian/userdata.img
 
 # Ramdumps pulled by droidian/dump-ramoops.py -- device RAM, regenerable
 memory/
+
+# droidian-camera fork: source is cloned and patched, artifacts generated
+droidian/camera-src/
+droidian/out-camera/
