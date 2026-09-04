@@ -398,6 +398,20 @@ expect_contains "state is reported"        /tmp/p-dro.$$ 'state=droidian'
 expect_contains "fingerprint is parsed"    /tmp/p-dro.$$ 'vendor_fp=halium/lineage_halium_arm64'
 expect_contains "package versions parsed"  /tmp/p-dro.$$ 'pkg_halium-hostdev-perms=1.0.0'
 expect_contains "probe is complete"        /tmp/p-dro.$$ 'probe_complete=yes'
+expect_contains "the running slot is read"  /tmp/p-dro.$$ 'slot=a'
+expect_contains "linuxroot is detected"     /tmp/p-dro.$$ 'has_linuxroot=yes'
+
+# A device that listed its partitions without linuxroot is the only state that
+# may authorise a repartition, so it must be told apart from a failed listing.
+sed '/^linuxroot$/d' "$ROOT/tests/fixtures/probe-droidian.txt" > /tmp/f-nolr.$$
+PROBE_STATE=droidian PROBE_SSH_FIXTURE=/tmp/f-nolr.$$ \
+    bash "$PROBE" probe_all > /tmp/p-nolr.$$ 2>&1
+expect_contains "an absent linuxroot is reported as absent" /tmp/p-nolr.$$ 'has_linuxroot=no'
+sed '/^--- partlabels$/,$d' "$ROOT/tests/fixtures/probe-droidian.txt" > /tmp/f-nolist.$$
+PROBE_STATE=droidian PROBE_SSH_FIXTURE=/tmp/f-nolist.$$ \
+    bash "$PROBE" probe_all > /tmp/p-nolist.$$ 2>&1
+expect_contains "a failed listing is not an absent partition" /tmp/p-nolist.$$ 'has_linuxroot=unknown'
+rm -f /tmp/f-nolr.$$ /tmp/p-nolr.$$ /tmp/f-nolist.$$ /tmp/p-nolist.$$
 
 # fastboot: less is readable, and what is missing must say so.
 PROBE_STATE=fastboot PROBE_FB_FIXTURE="$ROOT/tests/fixtures/probe-fastboot.txt" \

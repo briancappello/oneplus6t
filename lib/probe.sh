@@ -12,11 +12,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATH="$PATH:$HERE/bin"
 
-# partlabels <blob> — the partition names listed after the partlabels marker.
-# Empty output means the listing did not happen, which is different from a
-# device that listed its partitions and did not have the one we wanted.
-partlabels() {
-    sed -n '/^--- partlabels$/,$p' | tail -n +2 | sed '/^$/d'
+# section <name> — the lines between "--- <name>" and the next "--- " marker.
+# Empty output means the remote command produced nothing, which is deliberately
+# distinct from it producing an answer we did not like.
+section() {
+    awk -v m="--- $1" '$0==m {f=1; next} /^--- /{f=0} f' | sed '/^$/d'
 }
 
 device_state() {
@@ -26,7 +26,7 @@ device_state() {
 
 ssh_blob() {
     [ -n "${PROBE_SSH_FIXTURE:-}" ] && { cat "$PROBE_SSH_FIXTURE"; return; }
-    device-ssh -r 'grep -E "^ro\.(build\.fingerprint|oxygen\.version)" /vendor/build.prop /system/build.prop 2>/dev/null; echo ---; dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^ii"; echo "--- partlabels"; ls /dev/disk/by-partlabel/ 2>/dev/null' 2>/dev/null
+    device-ssh -r 'grep -E "^ro\.(build\.fingerprint|oxygen\.version)" /vendor/build.prop /system/build.prop 2>/dev/null; echo ---; dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^ii"; echo "--- slot"; sed -n "s/.*androidboot\.slot_suffix=_\?\([ab]\).*/\1/p" /proc/cmdline; echo "--- partlabels"; ls /dev/disk/by-partlabel/ 2>/dev/null' 2>/dev/null
 }
 
 fb_blob() {
@@ -48,7 +48,9 @@ probe_all() {
             blob=$(ssh_blob)
             oos=$(sed -n 's/^.*ro\.oxygen\.version=//p'      <<<"$blob" | head -1)
             vfp=$(sed -n 's/^.*ro\.build\.fingerprint=//p'   <<<"$blob" | head -1)
-            slot=$(printf '%s' "${PROBE_SLOT:-}")
+            # The running slot is in the kernel command line. Without it
+            # skip_boot cannot name a partition, so it never skips.
+            slot=$(section slot <<<"$blob" | head -1)
             # Package versions: "ii  name  version  arch  desc"
             while read -r _ name ver _; do
                 [ -n "${name:-}" ] || continue
@@ -57,7 +59,7 @@ probe_all() {
             # has_linuxroot decides whether a destructive repartition is even
             # considered, so "the listing failed" must stay distinct from "the
             # partition is not there". Only the latter may trigger an erase.
-            labels=$(partlabels <<<"$blob")
+            labels=$(section partlabels <<<"$blob")
             if [ -z "$labels" ]; then    lr=unknown
             elif grep -qx linuxroot <<<"$labels"; then lr=yes
             else                         lr=no
