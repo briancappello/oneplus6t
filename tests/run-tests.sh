@@ -85,7 +85,7 @@ PROV="$ROOT/provision.sh"
 
 # A complete probe with a manifest that has all targets should request nothing.
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\n' > /tmp/pr-ok.$$
-"$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$HERE/fixtures/manifest.json" \
+"$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     > /tmp/pl-ok.$$ 2>/dev/null
 python3 -c "import json;json.load(open('/tmp/pl-ok.$$'))" \
     && { echo "  PASS  plan-only emits valid JSON"; pass=$((pass+1)); } \
@@ -94,7 +94,7 @@ expect_contains "plan has a build list" /tmp/pl-ok.$$ '"build"'
 
 # An incomplete probe must request everything, never skip.
 printf 'state=fastboot\nprobe_complete=no\n' > /tmp/pr-part.$$
-"$PROV" --plan-only --probe-file /tmp/pr-part.$$ --manifest "$HERE/fixtures/manifest.json" \
+"$PROV" --plan-only --probe-file /tmp/pr-part.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     > /tmp/pl-part.$$ 2>/dev/null
 expect_contains "incomplete probe requests kernel" /tmp/pl-part.$$ 'kernel'
 expect_contains "incomplete probe requests rootfs" /tmp/pl-part.$$ 'rootfs'
@@ -106,6 +106,41 @@ printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-empty.$$
 expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
 
 rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ /tmp/m-empty.$$ /tmp/pl-empty.$$
+
+# Skip detection: boot phase skips when sha matches
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=aaaa\n' > /tmp/pr-boot-match.$$
+. "$ROOT/lib/phases.sh"
+if skip_boot /tmp/pr-boot-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
+    echo "  PASS  boot phase skips when sha matches"; pass=$((pass+1))
+else
+    echo "  FAIL  boot phase skips when sha matches"; fail=$((fail+1))
+fi
+
+# Skip detection: boot phase runs when sha differs
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n' > /tmp/pr-boot-diff.$$
+if skip_boot /tmp/pr-boot-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
+    echo "  FAIL  boot phase runs when sha differs"; fail=$((fail+1))
+else
+    echo "  PASS  boot phase runs when sha differs"; pass=$((pass+1))
+fi
+
+# Skip detection: data phase skips when package versions match
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-data-match.$$
+if skip_data /tmp/pr-data-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
+    echo "  PASS  data phase skips when versions match"; pass=$((pass+1))
+else
+    echo "  FAIL  data phase skips when versions match"; fail=$((fail+1))
+fi
+
+# Skip detection: data phase runs when package version differs
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-data-diff.$$
+if skip_data /tmp/pr-data-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
+    echo "  FAIL  data phase runs when version differs"; fail=$((fail+1))
+else
+    echo "  PASS  data phase runs when version differs"; pass=$((pass+1))
+fi
+
+rm -f /tmp/pr-boot-match.$$ /tmp/pr-boot-diff.$$ /tmp/pr-data-match.$$ /tmp/pr-data-diff.$$
 
 # --artifacts mode accepts a path and runs all phases
 "$PROV" --artifacts /tmp/nonexistent --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
@@ -132,7 +167,7 @@ echo ">>> lib/probe.sh tests"
 PROBE="$ROOT/lib/probe.sh"
 
 # Droidian: everything readable over ssh.
-PROBE_STATE=droidian PROBE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" \
+PROBE_STATE=droidian PROBE_SSH_FIXTURE="$ROOT/tests/fixtures/probe-droidian.txt" \
     bash "$PROBE" probe_all > /tmp/p-dro.$$ 2>&1
 expect_contains "state is reported"        /tmp/p-dro.$$ 'state=droidian'
 expect_contains "fingerprint is parsed"    /tmp/p-dro.$$ 'vendor_fp=halium/lineage_halium_arm64'
@@ -140,7 +175,7 @@ expect_contains "package versions parsed"  /tmp/p-dro.$$ 'pkg_halium-hostdev-per
 expect_contains "probe is complete"        /tmp/p-dro.$$ 'probe_complete=yes'
 
 # fastboot: less is readable, and what is missing must say so.
-PROBE_STATE=fastboot PROBE_FB_FIXTURE="$HERE/fixtures/probe-fastboot.txt" \
+PROBE_STATE=fastboot PROBE_FB_FIXTURE="$ROOT/tests/fixtures/probe-fastboot.txt" \
     bash "$PROBE" probe_all > /tmp/p-fb.$$ 2>&1
 expect_contains "slot is parsed in fastboot" /tmp/p-fb.$$ 'slot=a'
 expect_contains "unreadable facts say unknown" /tmp/p-fb.$$ '=unknown'
