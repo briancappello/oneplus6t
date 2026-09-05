@@ -1,0 +1,48 @@
+diff --git a/drivers/char/adsprpc.c b/drivers/char/adsprpc.c
+index 5907254c5..18f64dcd9 100644
+--- a/drivers/char/adsprpc.c
++++ b/drivers/char/adsprpc.c
+@@ -1982,6 +1982,20 @@ static void fastrpc_init(struct fastrpc_apps *me)
+ 
+ static int fastrpc_release_current_dsp_process(struct fastrpc_file *fl);
+ 
++/*
++ * Kernel-mode invocations (process create/exit, map/unmap) used to wait for
++ * the DSP forever. A process exit issued from close() while the DSP still has
++ * traffic in flight for that PD never gets its answer, and the task sits in
++ * uninterruptible sleep where not even SIGKILL reaches it; on this device that
++ * is what kept the Android container's init alive through every shutdown.
++ * Bound the wait, as mainline drivers/misc/fastrpc.c does. A late response is
++ * dropped by the ctxtable id/magic check, so freeing the context is safe.
++ */
++static unsigned int kernel_invoke_timeout_ms = 5000;
++module_param(kernel_invoke_timeout_ms, uint, 0644);
++MODULE_PARM_DESC(kernel_invoke_timeout_ms,
++	"Bound on kernel-mode DSP invocations; 0 waits forever");
++
+ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
+ 				   uint32_t kernel,
+ 				   struct fastrpc_ioctl_invoke_crc *inv)
+@@ -2051,9 +2065,19 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
+ 	if (err)
+ 		goto bail;
+  wait:
+-	if (kernel)
+-		wait_for_completion(&ctx->work);
+-	else {
++	if (kernel) {
++		if (!kernel_invoke_timeout_ms) {
++			wait_for_completion(&ctx->work);
++		} else if (!wait_for_completion_timeout(&ctx->work,
++				msecs_to_jiffies(kernel_invoke_timeout_ms))) {
++			pr_err("adsprpc: %s: kernel invoke to cid %d handle 0x%x timed out after %u ms (pid %d %s)\n",
++				__func__, cid, invoke->handle,
++				kernel_invoke_timeout_ms, current->pid,
++				current->comm);
++			err = -ETIMEDOUT;
++			goto bail;
++		}
++	} else {
+ 		interrupted = wait_for_completion_interruptible(&ctx->work);
+ 		VERIFY(err, 0 == (err = interrupted));
+ 		if (err)

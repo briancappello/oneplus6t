@@ -1,0 +1,51 @@
+diff --git a/drivers/power/reset/msm-poweroff.c b/drivers/power/reset/msm-poweroff.c
+index 65fd6069e..a10b39ac1 100644
+--- a/drivers/power/reset/msm-poweroff.c
++++ b/drivers/power/reset/msm-poweroff.c
+@@ -105,6 +105,26 @@ struct reset_attribute {
+ module_param_call(download_mode, dload_set, param_get_int,
+ 			&download_mode, 0644);
+ 
++/*
++ * Warm-reset the PMIC on every restart, not only on panic/dload, so DDR keeps
++ * its contents across a normal reboot and the ramoops console and pmsg zones
++ * survive into the next boot. Off by default; debugging tooling turns it on at
++ * runtime through /sys/module/msm_poweroff/parameters/force_warm_reset.
++ */
++static bool force_warm_reset;
++module_param(force_warm_reset, bool, 0644);
++
++/*
++ * Write the download-mode cookie on the next restart as if the kernel had
++ * panicked, so the bootloader halts in ramdump mode (USB 05c6:900e) with DDR
++ * intact instead of booting. That is the only path on this device that
++ * preserves the ramoops zones: a warm reset alone does not, the bootloader
++ * still wipes them. Off by default; the host-side shutdown tracer sets it
++ * right before a traced reboot and reads the zones back over Sahara.
++ */
++static bool dload_on_reboot;
++module_param(dload_on_reboot, bool, 0644);
++
+ static int panic_prep_restart(struct notifier_block *this,
+ 			      unsigned long event, void *ptr)
+ {
+@@ -290,7 +310,8 @@ static void msm_restart_prepare(const char *cmd)
+ 	 */
+ 
+ 	set_dload_mode(download_mode &&
+-			(in_panic || restart_mode == RESTART_DLOAD));
++			(in_panic || restart_mode == RESTART_DLOAD ||
++			 dload_on_reboot));
+ #endif
+ 
+ 	if (qpnp_pon_check_hard_reset_stored()) {
+@@ -304,6 +325,9 @@ static void msm_restart_prepare(const char *cmd)
+ 				(cmd != NULL && cmd[0] != '\0'));
+ 	}
+ 
++	if (force_warm_reset)
++		need_warm_reset = true;
++
+ 	/* Hard reset the PMIC unless memory contents must be maintained. */
+ 	if (need_warm_reset)
+ 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
