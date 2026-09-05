@@ -370,7 +370,7 @@ rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
 # Flash phases: data phase flashes userdata
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-flash-data.$$
 mkdir -p /tmp/artifacts-test/droidian
-touch /tmp/artifacts-test/droidian/userdata.img
+touch /tmp/artifacts-test/droidian/userdata.simg
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
 expect_rc "data phase exits 0" 0 "$rc"
 expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: installing rootfs'
@@ -381,7 +381,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/userdata.img
+touch /tmp/artifacts-test/droidian/userdata.simg
 : > "$HW_LOG"
 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
 timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
@@ -477,7 +477,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=n
 mkdir -p /tmp/artifacts-test/droidian/out/images /tmp/artifacts-test/msm
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/userdata.img
+touch /tmp/artifacts-test/droidian/userdata.simg
 touch /tmp/artifacts-test/msm/gpt_main0.bin
 
 : > "$HW_LOG"
@@ -518,6 +518,9 @@ rlog=/tmp/rlog.$$
 cat > /tmp/fake-ssh.$$ <<FS
 #!/usr/bin/env bash
 echo "SSH \$*" >> $rlog
+# A request to compress an artifact is answered with real compressed bytes, so
+# the receiving end's decompress-and-verify is exercised rather than skipped.
+case "\$*" in *zstd*) printf 'sparse rootfs fixture\n' | zstd -c ;; esac
 exit 0
 FS
 cat > /tmp/fake-scp.$$ <<FS
@@ -530,7 +533,8 @@ chmod +x /tmp/fake-ssh.$$ /tmp/fake-scp.$$
 printf '{"build":["adaptation"],"force":false}\n' > /tmp/rp.$$
 : > "$rlog"; : > "$HW_LOG"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
-    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /tmp/rb.$$ 2>&1; rc=$?
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
+    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/rb.$$ 2>&1; rc=$?
 expect_rc "remote build succeeds"                 0 "$rc"
 expect_contains "the plan is copied over"         "$rlog" 'SCP'
 expect_contains "the worker is reset to a commit" "$rlog" 'reset -q --hard'
@@ -540,6 +544,34 @@ expect_contains "artifacts are fetched back"      "$rlog" 'manifest.json'
 # A remote build touches no phone, so it must not require one to be attached.
 expect_absent  "a supplied plan probes no device" "$HW_LOG" 'device-ssh'
 
+# The rootfs moves compressed and sparse -- a seventh of the raw bytes -- and
+# never as a plain copy of the raw image.
+expect_contains "the rootfs is fetched compressed"    "$rlog" 'zstd -c'
+expect_contains "and in its sparse form"              "$rlog" 'userdata.simg'
+expect_absent  "the raw image is never copied over"   "$rlog" 'userdata.img'
+
+# A transfer that arrives with the wrong bytes must never reach the phone. This
+# is the one artifact big enough that a silent truncation is plausible, and a
+# truncated rootfs is a phone that will not boot and does not say why.
+cat > /tmp/fake-ssh.$$ <<FS
+#!/usr/bin/env bash
+echo "SSH \$*" >> $rlog
+case "\$*" in *zstd*) printf 'not the rootfs you built\n' | zstd -c ;; esac
+exit 0
+FS
+chmod +x /tmp/fake-ssh.$$
+: > "$HW_LOG"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
+    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/rb3.$$ 2>&1; rc=$?
+expect_rc "a corrupt rootfs transfer fails the run" 1 "$rc"
+expect_contains "and says the hash disagreed" /tmp/rb3.$$ 'arrived corrupt'
+expect_absent  "and nothing is flashed"       "$HW_LOG" 'fastboot flash'
+[ -e "$ROOT/droidian/userdata.simg.part" ] \
+    && { echo "  FAIL  a failed transfer leaves no .part behind"; fail=$((fail+1)); } \
+    || { echo "  PASS  a failed transfer leaves no .part behind"; pass=$((pass+1)); }
+rm -f /tmp/rb3.$$
+
 # A published commit must go over origin, not by bundle: the bundle path exists
 # only for work deliberately kept unpushed.
 expect_contains "a published commit fetches from origin" "$rlog" 'git fetch -q origin'
@@ -547,7 +579,8 @@ expect_absent  "a published commit sends no bundle"      "$rlog" 'op6t.bundle'
 
 : > "$rlog"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=0 \
-    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /dev/null 2>&1
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
+    --manifest "$ROOT/tests/fixtures/manifest.json" > /dev/null 2>&1
 expect_contains "unpublished WIP goes by bundle"  "$rlog" 'op6t.bundle'
 expect_absent  "unpublished WIP does not ask origin for a commit it lacks" "$rlog" 'git fetch -q origin'
 
@@ -558,7 +591,8 @@ exit 3
 FS
 chmod +x /tmp/fake-ssh.$$
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
-    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /tmp/rb2.$$ 2>&1
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
+    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/rb2.$$ 2>&1
 expect_rc "a failing worker fails the run" 1 "$?"
 expect_contains "and says which host"      /tmp/rb2.$$ 'taichi'
 rm -f /tmp/rb.$$ /tmp/rb2.$$

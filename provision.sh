@@ -131,10 +131,67 @@ remote_build() {
     # trustworthy and flashing must not proceed.
     "$SCP_CMD" -q "$host:$REMOTE_DIR/manifest.json" "$HERE/manifest.json" \
         || die "no manifest.json came back from $host"
-    for f in droidian/out/images/boot.img droidian/out/images/vbmeta.img droidian/userdata.img; do
+
+    # The kernel is 32 MB, the rootfs around 9 GB. The small ones come over now;
+    # the rootfs is left to start_rootfs_fetch, which runs only once something
+    # has decided the rootfs is actually going to be flashed.
+    for f in droidian/out/images/boot.img droidian/out/images/vbmeta.img; do
         mkdir -p "$(dirname "$HERE/$f")"
         "$SCP_CMD" -q "$host:$REMOTE_DIR/$f" "$HERE/$f" 2>/dev/null || true
     done
+}
+
+ROOTFS_IMG="droidian/userdata.simg"
+
+# manifest_field <path> <field> — one recorded property of one artifact.
+manifest_field() {
+    MAN="$MANIFEST" P="$1" F="$2" python3 - <<'PY'
+import json, os
+try:
+    doc = json.load(open(os.environ["MAN"]))
+    print(doc.get("artifacts", {}).get(os.environ["P"], {}).get(os.environ["F"], "") or "")
+except Exception:
+    print("")
+PY
+}
+
+# fetch_rootfs <host> — bring the rootfs over, compressed on the wire, and prove
+# it arrived intact before any of it can reach the phone.
+#
+# The image is Android sparse rather than raw: a 9 GiB mostly-empty container
+# sparses to 3.8 GiB and compresses to 1.3 GiB, so this moves a seventh of what
+# copying the raw file did. It is also the form fastboot wants, which sparses a
+# raw image itself before sending it.
+#
+# zstd on both ends rather than scp -C: it decompresses straight into the
+# destination, so the compressed copy never lands on disk. Into a .part file,
+# because an interrupted transfer must not be mistakable for a finished one --
+# flashing a truncated rootfs gives a phone that will not boot and no hint why.
+fetch_rootfs() {
+    local host=$1 dest="$HERE/$ROOTFS_IMG" want got
+    mkdir -p "$(dirname "$dest")"
+
+    # A rejected transfer must not leave its remains lying next to the real
+    # artifacts. Nothing downstream reads a .part, but a stale multi-gigabyte one
+    # sits in the repo until someone notices, and the next run would append this
+    # run's failure to it.
+    rm -f "$dest.part"
+    fail_fetch() { rm -f "$dest.part"; die "$*"; }
+
+    echo "    data: fetching the rootfs from $host, compressed"
+    "$SSH_CMD" "$host" "zstd -c -T0 -3 $REMOTE_DIR/$ROOTFS_IMG" \
+        | zstd -dc > "$dest.part" \
+        || fail_fetch "the rootfs transfer from $host failed; nothing was flashed"
+
+    # An exit status is a weak claim about a multi-gigabyte copy. The manifest
+    # recorded what the worker built, so compare against that instead.
+    want=$(manifest_field "$ROOTFS_IMG" sha256)
+    [ -n "$want" ] || fail_fetch "the manifest does not record a sha256 for $ROOTFS_IMG"
+    echo "    data: verifying the rootfs against the manifest"
+    got=$(sha256sum "$dest.part" | cut -d' ' -f1)
+    [ "$got" = "$want" ] \
+        || fail_fetch "the rootfs arrived corrupt: sha256 $got, expected $want"
+    mv "$dest.part" "$dest" || fail_fetch "could not finish the rootfs transfer"
 }
 
 # confirm_destructive <line...> — name every irreversible step, then require an
@@ -193,6 +250,7 @@ if [ "$MODE" = remote ]; then
         emit_plan "$(decide_build "$PROBE_FILE" "$MANIFEST")" > "$PLAN_FILE"
     fi
     remote_build "$REMOTE_HOST" "$PLAN_FILE"
+    fetch_rootfs "$REMOTE_HOST"
     echo "provision.sh: artifacts and manifest fetched from $REMOTE_HOST"
     exit 0
 fi
@@ -313,9 +371,12 @@ if [ "$MODE" = artifacts ]; then
     # Phase 3: data - install rootfs (destructive)
     if [ "$run_data" = yes ]; then
         echo "    data: installing rootfs"
-        userdata_img="$ARTIFACTS/droidian/userdata.img"
-        [ -f "$userdata_img" ] || die "userdata.img not found: $userdata_img"
-        echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB)"
+        userdata_img="$ARTIFACTS/$ROOTFS_IMG"
+        # Only fetched once it is known to be needed, so a run that skips this
+        # phase does not move gigabytes to decide it had nothing to do.
+        [ -f "$userdata_img" ] || [ -z "${BUILD_HOST:-}" ] || fetch_rootfs "$BUILD_HOST"
+        [ -f "$userdata_img" ] || die "rootfs image not found: $userdata_img"
+        echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB sparse)"
         fastboot flash userdata "$userdata_img" || die "failed to flash userdata"
         echo "    data: flashed userdata"
     elif wanted data; then

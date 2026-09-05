@@ -38,6 +38,7 @@ IMG_BLOCKS="${IMG_BLOCKS:-2359296}"     # 9 GiB of 4 KiB blocks; must exceed
                                         # ROOTFS_SIZE plus fs overhead
 STAGE="$HERE/stage"
 OUT="$HERE/userdata.img"
+SPARSE="$HERE/userdata.simg"
 
 say() { printf '\n>>> %s\n' "$*"; }
 
@@ -184,7 +185,19 @@ if ! dumpe2fs -h "$OUT" 2>/dev/null | grep -q has_journal; then
     exit 1
 fi
 
+# The image is mostly empty -- 9 GiB of container around a few GiB of rootfs --
+# so the Android sparse form of it is under half the size, and that is the form
+# fastboot wants anyway: given a raw image it sparses it itself before sending.
+# Converting here costs about a second and takes the same bytes off both the
+# network transfer and the USB transfer.
+say "converting to sparse for transfer and flashing"
+rm -f "$SPARSE"
+img2simg "$OUT" "$SPARSE"
+[ -s "$SPARSE" ] || { echo "ABORT: img2simg produced nothing" >&2; exit 1; }
+
 say "done"
 printf '    %s  %s bytes\n' "$OUT" "$(stat -c%s "$OUT")"
+printf '    %s  %s bytes (%s%% of raw)\n' "$SPARSE" "$(stat -c%s "$SPARSE")" \
+    "$(( $(stat -c%s "$SPARSE") * 100 / $(stat -c%s "$OUT") ))"
 dumpe2fs -h "$OUT" 2>/dev/null | grep -E "Filesystem features|Total journal size" | sed 's/^/    /'
 debugfs -R "ls -l /" "$OUT" 2>/dev/null | awk 'NF>5{printf "    %-22s %s\n",$NF,$6}'

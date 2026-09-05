@@ -42,6 +42,8 @@ droidian-build-tools/
 droidian/stage/
 droidian/rootfs/
 droidian/userdata.img
+droidian/userdata.simg
+droidian/userdata.simg.part
 
 # Ramdumps pulled by droidian/dump-ramoops.py -- device RAM, regenerable
 memory/
