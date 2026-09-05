@@ -297,8 +297,10 @@ for state in droidian fastboot edl off unknown; do
 done
 rm -f /tmp/pr-act.$$
 
-# Skip detection: data phase skips when package versions match
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-data-match.$$
+# Skip detection: data phase skips when package versions match. One build target
+# ships several packages -- adaptation alone ships three -- so every .deb in the
+# manifest has to be accounted for, not one representative per target.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-data-match.$$
 if skip_data /tmp/pr-data-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  PASS  data phase skips when versions match"; pass=$((pass+1))
 else
@@ -306,14 +308,20 @@ else
 fi
 
 # Skip detection: data phase runs when package version differs
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-data-diff.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-diff.$$
 if skip_data /tmp/pr-data-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  FAIL  data phase runs when version differs"; fail=$((fail+1))
 else
     echo "  PASS  data phase runs when version differs"; pass=$((pass+1))
 fi
 
-rm -f /tmp/pr-boot-match.$$ /tmp/pr-boot-diff.$$ /tmp/pr-data-match.$$ /tmp/pr-data-diff.$$
+# A second package from the same target, missing on the device, must still stop
+# the skip: checking one .deb per target would have called this a match.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-part.$$
+expect_pred "data runs when a sibling package of the same target is absent" \
+    run skip_data /tmp/pr-data-part.$$ "$ROOT/tests/fixtures/manifest.json"
+
+rm -f /tmp/pr-boot-match.$$ /tmp/pr-boot-diff.$$ /tmp/pr-data-match.$$ /tmp/pr-data-diff.$$ /tmp/pr-data-part.$$
 
 # Flash phases: boot phase flashes boot and vbmeta
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n' > /tmp/pr-flash-boot.$$
@@ -326,7 +334,7 @@ expect_contains "boot phase flashes boot" /tmp/p-flash-boot.$$ 'boot: flashing'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
 
 # Flash phases: data phase flashes userdata
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-flash-data.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-flash-data.$$
 mkdir -p /tmp/artifacts-test/droidian
 touch /tmp/artifacts-test/droidian/userdata.img
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
@@ -335,7 +343,7 @@ expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: instal
 rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
 
 # --artifacts mode accepts a path and runs all phases
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\npkg_camera=2.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-ok.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-ok.$$
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
@@ -368,6 +376,7 @@ expect_absent "edl phase is skipped" /tmp/p-phase.$$ 'edl:'
 expect_absent "data phase is skipped" /tmp/p-phase.$$ 'data:'
 rm -rf /tmp/artifacts-test /tmp/pr-phase.$$ /tmp/p-phase.$$
 
+
 # Destructive work must be explained and confirmed. has_linuxroot=no is the one
 # state that authorises a repartition, so it is the state to test refusal in.
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=no\n' > /tmp/pr-des.$$
@@ -397,7 +406,7 @@ expect_rc "--yes proceeds without a terminal" 0 "$rc"
 expect_contains "the confirmed run repartitions" "$HW_LOG" 'repartition-dualboot'
 
 # A run with nothing destructive to do must not ask at all.
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=yes\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-quiet.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=yes\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-quiet.$$
 : > "$HW_LOG"
 FAKE_SSH_OUT='aaaa  -' timeout 30 "$PROV" --artifacts /tmp/artifacts-test \
     --probe-file /tmp/pr-quiet.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
@@ -459,6 +468,7 @@ PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
 expect_rc "a failing worker fails the run" 1 "$?"
 expect_contains "and says which host"      /tmp/rb2.$$ 'taichi'
 rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/rb.$$ /tmp/rb2.$$
+
 
 echo
 echo ">>> lib/probe.sh tests"

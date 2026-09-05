@@ -17,6 +17,10 @@
     "droidian/out-adaptation/adaptation-oneplus-fajita_1.0.0_all.deb": {
       "target": "adaptation", "version": "1.0.0", "sha256": "dddd",
       "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"
+    },
+    "droidian/out-adaptation/halium-hostdev-perms_1.0.0_all.deb": {
+      "target": "adaptation", "version": "1.0.0", "sha256": "eeee",
+      "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"
     }
   }
 }

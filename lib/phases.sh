@@ -82,52 +82,55 @@ PY
     return 1
 }
 
-# Skip data phase if linuxroot holds our rootfs at the manifest's package versions.
+# Skip the data phase when the device already has every package the rootfs would
+# have installed, at the manifest's versions.
+#
+# Both sides of this comparison must speak Debian package names. The probe
+# reports what dpkg calls them and the .deb filenames carry the same name; this
+# used to compare against build *target* names instead -- "camera",
+# "adaptation" -- which the device has never heard of, since it knows them as
+# droidian-camera and adaptation-oneplus-fajita. No version could ever agree, so
+# the phase could not skip at all. It failed in the safe direction, but on this
+# phone "reflash a rootfs that was already correct" means erasing it, which is
+# not a cost worth paying on every run.
+#
+# One target produces several packages -- adaptation alone ships three -- so the
+# unit compared is the .deb, not the target.
 skip_data() {
-    local probe=$1 manifest=$2
-    local pkg_names
-    
-    # Get package names from manifest
-    pkg_names=$(python3 -c "
-import json
+    local probe=$1 manifest=$2 want name ver probe_ver
+
+    want=$(MAN="$manifest" python3 - <<'PY'
+import json, os, sys
 try:
-    doc = json.load(open('$manifest'))
-    arts = doc.get('artifacts', {})
-    for path, art in arts.items():
-        if path.endswith('.deb'):
-            name = art.get('target', '')
-            if name in ('camera', 'adaptation'):
-                print(name)
-except:
-    pass
-")
-    
+    doc = json.load(open(os.environ["MAN"]))
+except Exception:
+    sys.exit(0)
+for path, art in doc.get("artifacts", {}).items():
+    base = os.path.basename(path)
+    if not base.endswith(".deb"):
+        continue
+    # name_VERSION_arch.deb
+    name = base.split("_")[0]
+    version = art.get("version") or ""
+    if name and version:
+        print("%s %s" % (name, version))
+PY
+)
     # No readable package evidence is not permission to skip. An empty list
     # would otherwise fall straight through the loop below and return "skip",
     # which is how a missing manifest could silently cancel a rootfs install.
-    [ -n "$pkg_names" ] || return 1
+    [ -n "$want" ] || return 1
 
-    # Check each package version against probe
-    for pkg in $pkg_names; do
-        local manifest_ver probe_ver
-        manifest_ver=$(python3 -c "
-import json
-try:
-    doc = json.load(open('$manifest'))
-    arts = doc.get('artifacts', {})
-    for path, art in arts.items():
-        if path.endswith('.deb') and art.get('target') == '$pkg':
-            print(art.get('version', 'unknown'))
-            break
-except:
-    print('unknown')
-")
-        
-        probe_ver=$(grep "^pkg_${pkg}=" "$probe" | cut -d= -f2)
-        [ "$probe_ver" = "unknown" ] && return 1
-        [ "$manifest_ver" != "$probe_ver" ] && return 1
-    done
-    
+    while read -r name ver; do
+        [ -n "$name" ] || continue
+        probe_ver=$(grep "^pkg_${name}=" "$probe" | cut -d= -f2)
+        # Absent, unreadable, or different: none of these are evidence the
+        # device already has it.
+        [ -n "$probe_ver" ] || return 1
+        [ "$probe_ver" = unknown ] && return 1
+        [ "$probe_ver" = "$ver" ] || return 1
+    done <<< "$want"
+
     return 0
 }
 
