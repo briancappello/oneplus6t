@@ -10,26 +10,57 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${SRC:-$ROOT/src}"
-OUT="${OUT:-$ROOT/out}"
+# Outputs land where the droidian scripts already write them and where
+# provision.sh already looks for them: the repo root. These three agreeing is
+# the whole contract, so OUT is not free to be somewhere tidier.
+OUT="${OUT:-$ROOT}"
 FAKE_BUILD="${FAKE_BUILD:-}"
 
-# name|deps|outputs|command (command runs in the named source tree)
+# name|deps|outputs|tree|command
+#
 # Output paths are relative to OUT and are the keys provision.sh indexes the
 # manifest by, so they must match what it looks for under --artifacts.
+#
+# tree is the source tree staleness is judged from, under SRC. command is what
+# actually builds the target, run from the repo root. These are two different
+# things: the table used to have only one column for both, so every real build
+# ran `bash -c adaptation` in a directory that has never existed.
 TARGETS=(
-  "kernel||droidian/out/images/boot.img droidian/out/images/vbmeta.img|kernel"
-  "camera||droidian/out-camera|camera"
-  "adaptation||droidian/out-adaptation|adaptation"
-  "rootfs|camera adaptation|droidian/userdata.img|droidian"
+  "kernel||droidian/out/images/boot.img droidian/out/images/vbmeta.img|kernel|droidian/build-kernel.sh"
+  "camera||droidian/out-camera|camera|droidian/build-camera.sh"
+  "adaptation||droidian/out-adaptation|adaptation|droidian/adaptation/build-adaptation.sh"
+  "rootfs|camera adaptation|droidian/userdata.img|droidian|droidian/build-rootfs.sh"
 )
 
 list_targets() {
-    local row name deps out cmd
-    printf '%-12s %-22s %s\n' NAME DEPS OUTPUT
+    local row name deps out tree cmd
+    printf '%-12s %-22s %-38s %s\n' NAME DEPS OUTPUT COMMAND
     for row in "${TARGETS[@]}"; do
-        IFS='|' read -r name deps out cmd <<< "$row"
-        printf '%-12s %-22s %s\n' "$name" "${deps:--}" "${out:--}"
+        IFS='|' read -r name deps out tree cmd <<< "$row"
+        printf '%-12s %-22s %-38s %s\n' "$name" "${deps:--}" "${out:--}" "${cmd:--}"
     done
+}
+
+# target_cmd <name> — the command that builds the target, relative to ROOT.
+target_cmd() {
+    printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$1" '$1==n {print $5; exit}'
+}
+
+# Every declared command must exist and be executable. A table entry naming a
+# script that is not there is a build that fails only on the worker, minutes in.
+check_commands() {
+    local row name deps out tree cmd bad=0
+    for row in "${TARGETS[@]}"; do
+        IFS='|' read -r name deps out tree cmd <<< "$row"
+        if [ -z "$cmd" ]; then
+            echo "build.sh: target '$name' declares no command" >&2; bad=1; continue
+        fi
+        if [ ! -x "$ROOT/$cmd" ]; then
+            echo "build.sh: target '$name' command is not executable: $cmd" >&2; bad=1
+        fi
+    done
+    [ "$bad" -eq 0 ] || return 1
+    echo "build.sh: every target has an executable command"
 }
 
 # target_deps <name> — print the target's dependencies, space-separated.
@@ -66,7 +97,7 @@ target_outputs() {
     printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$1" '$1==n {print $3; exit}'
 }
 
-# target_tree <name> — the source tree the target's command runs in.
+# target_tree <name> — the source tree the target's staleness is judged from.
 target_tree() {
     local t; t=$(printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$1" '$1==n {print $4; exit}')
     printf '%s\n' "${t:-$1}"
@@ -140,13 +171,12 @@ PY
     return 1
 }
 
-# run_target <name> — run one target's command in its source tree.
+# run_target <name> — run one target's build command from the repo root.
 run_target() {
-    local name="$1" row deps out cmd tree
+    local name="$1" row deps out tree cmd
     row="$(printf '%s\n' "${TARGETS[@]}" | awk -F'|' -v n="$name" '$1==n {print; exit}')"
     [ -n "$row" ] || { echo "build.sh: unknown target: $name" >&2; return 1; }
-    IFS='|' read -r name deps out cmd <<< "$row"
-    tree="${cmd:-$name}"
+    IFS='|' read -r name deps out tree cmd <<< "$row"
 
     if [ -n "$FAKE_BUILD" ]; then
         local o abs=""
@@ -157,12 +187,11 @@ run_target() {
             echo "build.sh: target '$name' has no output; nothing to do" >&2
             return 1
         fi
-        local src="$SRC/$tree"
-        [ -d "$src" ] || { echo "build.sh: source tree not found: $src" >&2; return 1; }
+        [ -x "$ROOT/$cmd" ] || { echo "build.sh: build command not found: $cmd" >&2; return 1; }
         local o
         for o in $out; do mkdir -p "$OUT/$(dirname "$o")"; done
-        echo "build.sh: building $name in $src"
-        ( cd "$src" && bash -c "$cmd" )
+        echo "build.sh: building $name with $cmd"
+        ( cd "$ROOT" && "./$cmd" )
     fi
 }
 
@@ -310,6 +339,11 @@ main() {
     if [ "${1:-}" = "--list" ]; then
         list_targets
         return 0
+    fi
+
+    if [ "${1:-}" = "--check-commands" ]; then
+        check_commands
+        return
     fi
 
     if [ "${1:-}" = "--plan" ]; then

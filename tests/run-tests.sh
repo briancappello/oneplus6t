@@ -60,6 +60,14 @@ out=$("$BUILD" --list 2>&1); rc=$?
 echo "$out" > /tmp/b-list.$$
 expect_rc "--list exits 0" 0 "$rc"
 expect_contains "--list shows deps and output" /tmp/b-list.$$ 'camera adaptation'
+expect_contains "--list names the command that builds each target" /tmp/b-list.$$ 'build-rootfs.sh'
+
+# Every declared command must be a real executable. The table once held a bare
+# tree name in the command column, so a real build ran `bash -c adaptation` and
+# the only thing that ever exercised the path was FAKE_BUILD. Nothing failed
+# until a worker tried it.
+"$BUILD" --check-commands > /tmp/b-cmd.$$ 2>&1; rc=$?
+expect_rc "every target's build command exists" 0 "$rc"
 
 out=$("$BUILD" nosuchtarget 2>&1); rc=$?
 echo "$out" > /tmp/b-bad.$$
