@@ -14,6 +14,36 @@ emits `plan.json` saying what needs building, then runs skippable flash phases
 and verifies the user-visible outcome. Neither reimplements build or flash
 logic; they add ordering, provenance, skip detection and verification.
 
+## Status
+
+79 of 84 steps done. Both suites green: `./tests/run-tests.sh` (121 assertions)
+and `droidian/adaptation/tests/run-tests.sh` (40), and both pass under
+`PATH=/usr/bin:/bin`, so no test can reach a phone.
+
+Verified on real machines, not just in the suite: `--remote-build taichi` builds
+this commit on the worker and brings the manifest back; on the phone as it
+stands, `./provision.sh` skips `edl`, `data` and `activate` and `PHASE=verify`
+reports ALL PASS.
+
+The five open steps all need hardware runs that write to the phone, so they are
+deliberately not ticked from a session that did not perform them:
+
+| Step | Why it is open |
+|---|---|
+| Task 6 Step 6 | staleness proven on fake targets, not on real artifacts |
+| Task 6 Step 7 | the kernel has not been rebuilt since the loop/discard patch landed |
+| Task 12 Step 5 | running the `data` phase erases the Droidian rootfs |
+| Task 13 Steps 5-6 | the phone is already repartitioned; redoing it erases everything |
+
+Four defects were found and fixed while finishing the last two tasks, all of
+them the same shape -- two halves of the pipeline naming the same thing
+differently, where the mismatch failed safe and so stayed invisible:
+
+- `build.sh` had no command column, so every real build ran `bash -c <treename>`
+- `provision.sh` read the manifest from `droidian/`, `build.sh` wrote it at the root
+- `skip_data` compared build target names against Debian package names
+- `verify` called an `echo` reply an installation
+
 **Tech Stack:** bash, `python3` (JSON and the existing `edl`/`paramiko` venv),
 `git`, `sha256sum`, `fastboot`, `debugfs`. No new host requirements beyond what
 `check-env.sh` already asserts.
@@ -167,7 +197,7 @@ runtime: `build-rootfs.sh` aborts with `no .debs found` without them.
   `fail` counters, extended by every later task. `fake-target` records each
   invocation so tests can assert ordering.
 
-- [ ] **Step 1: Write the fake target**
+- [x] **Step 1: Write the fake target**
 
 It appends its own name to `$FT_LOG` and creates whatever output paths it is
 given, so tests can assert both *what ran* and *in what order* without running
@@ -189,7 +219,7 @@ done
 exit "${FT_RC:-0}"
 ```
 
-- [ ] **Step 2: Write the test runner**
+- [x] **Step 2: Write the test runner**
 
 `tests/run-tests.sh`:
 
@@ -237,7 +267,7 @@ echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
 ```
 
-- [ ] **Step 3: Run it to confirm the harness works**
+- [x] **Step 3: Run it to confirm the harness works**
 
 ```bash
 chmod +x tests/run-tests.sh tests/fixtures/fake-target
@@ -246,7 +276,7 @@ chmod +x tests/run-tests.sh tests/fixtures/fake-target
 
 Expected: prints `>>> build.sh tests` then `passed=0 failed=0`, exits 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests
@@ -268,7 +298,7 @@ git commit -m "test(build): offline harness and a fake build target"
   `BUILD_TARGET_CMD_<name>` overrides the command a target runs; this is the
   seam every later test relies on.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh` above the final `echo`:
 
@@ -290,7 +320,7 @@ expect_contains "unknown target names itself" /tmp/b-bad.$$ 'nosuchtarget'
 rm -f /tmp/b-list.$$ /tmp/b-bad.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -298,7 +328,7 @@ rm -f /tmp/b-list.$$ /tmp/b-bad.$$
 
 Expected: every case FAILs — `build.sh` does not exist yet.
 
-- [ ] **Step 3: Write build.sh**
+- [x] **Step 3: Write build.sh**
 
 ```bash
 #!/usr/bin/env bash
@@ -389,7 +419,7 @@ done
 [ ${#want[@]} -gt 0 ] || want=($(targets))
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 chmod +x build.sh
@@ -398,7 +428,7 @@ chmod +x build.sh
 
 Expected: `passed=9 failed=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add build.sh tests/run-tests.sh
@@ -423,7 +453,7 @@ without invoking a real twenty-minute build."
   build order on stdout, and `run_target <name>` which executes it. Task 4 wraps
   `run_target` with staleness checks; Task 5 feeds `resolve` from a plan file.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -470,7 +500,7 @@ expect_contains "the failing target is named" /tmp/b-fail.$$ 'camera'
 rm -f "$ftlog" /tmp/b-run.$$ /tmp/b-fail.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -478,7 +508,7 @@ rm -f "$ftlog" /tmp/b-run.$$ /tmp/b-fail.$$
 
 Expected: the new cases FAIL — nothing runs targets yet.
 
-- [ ] **Step 3: Implement resolve and run_target**
+- [x] **Step 3: Implement resolve and run_target**
 
 Insert above the `# ---- arguments` block in `build.sh`:
 
@@ -509,7 +539,7 @@ run_target() {
 }
 ```
 
-- [ ] **Step 4: Drive it from the argument block**
+- [x] **Step 4: Drive it from the argument block**
 
 Append to the end of `build.sh`:
 
@@ -522,7 +552,7 @@ done
 say "done"
 ```
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -530,7 +560,7 @@ say "done"
 
 Expected: `passed=17 failed=0`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add build.sh tests/run-tests.sh
@@ -593,7 +623,7 @@ is a *separate* checkout and the one that mattered when a reverted DT patch
 stayed flashed on the device. Both carry a `-dirty` suffix when the tree has
 uncommitted changes.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -638,7 +668,7 @@ rm -f /tmp/b-man.$$ /tmp/b-dirty.$$
 Note `run_fake` must be extended to pass `FG_DIRTY` through; change its `env`
 invocation to `env FORCE=1 FG_DIRTY="${FG_DIRTY:-0}" ...`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -646,7 +676,7 @@ invocation to `env FORCE=1 FG_DIRTY="${FG_DIRTY:-0}" ...`.
 
 Expected: the manifest cases FAIL — no manifest is written yet.
 
-- [ ] **Step 3: Implement provenance**
+- [x] **Step 3: Implement provenance**
 
 Add to `build.sh` above `resolve`:
 
@@ -674,7 +704,7 @@ source_commit() {
 }
 ```
 
-- [ ] **Step 4: Implement write_manifest**
+- [x] **Step 4: Implement write_manifest**
 
 Add below `run_target`:
 
@@ -732,7 +762,7 @@ PY
 }
 ```
 
-- [ ] **Step 5: Call it after the build loop**
+- [x] **Step 5: Call it after the build loop**
 
 Replace the trailing `say "done"` in `build.sh` with:
 
@@ -741,7 +771,7 @@ write_manifest $order
 say "done"
 ```
 
-- [ ] **Step 6: Run to verify it passes**
+- [x] **Step 6: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -749,7 +779,7 @@ say "done"
 
 Expected: `passed=26 failed=0`.
 
-- [ ] **Step 7: Ignore the manifest**
+- [x] **Step 7: Ignore the manifest**
 
 `manifest.json` describes one machine's output tree, so it is not tracked.
 Append to `.gitignore`:
@@ -758,7 +788,7 @@ Append to `.gitignore`:
 droidian/manifest.json
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add build.sh tests .gitignore
@@ -795,7 +825,7 @@ the built boot.img stayed flashed, with nothing recording the divergence."
 Rule 4 is the one that matters. Existence-only checks are what let a `boot.img`
 built from a since-reverted patch stay on a device.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -855,7 +885,7 @@ expect_contains "the missing reason is reported" /tmp/b-gone.$$ 'missing'
 rm -f /tmp/b-skip.$$ /tmp/b-moved.$$ /tmp/b-dirty2.$$ /tmp/b-gone.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -863,7 +893,7 @@ rm -f /tmp/b-skip.$$ /tmp/b-moved.$$ /tmp/b-dirty2.$$ /tmp/b-gone.$$
 
 Expected: the staleness cases FAIL — every run currently builds.
 
-- [ ] **Step 3: Implement is_stale**
+- [x] **Step 3: Implement is_stale**
 
 Add to `build.sh` above `run_target`:
 
@@ -916,7 +946,7 @@ PY
 }
 ```
 
-- [ ] **Step 4: Use it in the build loop**
+- [x] **Step 4: Use it in the build loop**
 
 Replace the loop at the end of `build.sh` with:
 
@@ -938,7 +968,7 @@ say "done${built[*]+ (built: ${built[*]})}"
 Note `run_target` no longer prints its own `building` line; delete the
 `say "building $name"` from it so the reason is not printed twice.
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -946,7 +976,7 @@ Note `run_target` no longer prints its own `building` line; delete the
 
 Expected: `passed=34 failed=0`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add build.sh tests/run-tests.sh
@@ -982,7 +1012,7 @@ dirty tree is never considered up to date because it is not reproducible."
 `force: true` rebuilds even when up to date, for when the phone host has
 evidence the worker cannot see.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -1010,7 +1040,7 @@ rm -f /tmp/b-plan.$$ /tmp/b-planout.$$ /tmp/b-badplan.$$ /tmp/b-badout.$$ \
       /tmp/b-nofile.$$ /tmp/b-junk.$$ /tmp/b-junkout.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -1018,7 +1048,7 @@ rm -f /tmp/b-plan.$$ /tmp/b-planout.$$ /tmp/b-badplan.$$ /tmp/b-badout.$$ \
 
 Expected: the `--plan` cases FAIL — the flag does not exist.
 
-- [ ] **Step 3: Implement --plan**
+- [x] **Step 3: Implement --plan**
 
 Add to `build.sh` above the argument loop:
 
@@ -1056,7 +1086,7 @@ Add a `--plan` case to the argument loop, before the `-*` catch-all:
             shift ;;
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -1064,7 +1094,7 @@ Add a `--plan` case to the argument loop, before the `-*` catch-all:
 
 Expected: `passed=40 failed=0`.
 
-- [ ] **Step 5: Run it for real, on the worker**
+- [x] **Step 5: Run it for real, on the worker**
 
 This is the acceptance test. It must run on taichi, not the workstation — the
 whole point is that building happens where the cores are.
@@ -1110,7 +1140,7 @@ Expected: it rebuilds — `source moved` or `source tree is dirty` — rather th
 reporting the existing patched image as up to date. Record the new
 `source_commit` from the manifest; Task 12 flashes it.
 
-- [ ] **Step 8: Document it**
+- [x] **Step 8: Document it**
 
 In `README.md`, replace the `build.sh` row status in the pipeline table with
 **works**, and add beneath the table:
@@ -1124,7 +1154,7 @@ its output is missing — an artifact built from a since-reverted patch is
 otherwise indistinguishable from a current one, which has already happened here.
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add build.sh tests/run-tests.sh README.md
@@ -1166,7 +1196,7 @@ omitted and never guessed. `probe_complete=no` then forces every phase to run
 rather than silently skipping on absent evidence — the failure mode that a
 missing value would otherwise cause is a skipped destructive step.
 
-- [ ] **Step 1: Capture the fixtures from the real device**
+- [x] **Step 1: Capture the fixtures from the real device**
 
 These must be captured, not invented, so the parser is tested against the exact
 shape the hardware produces:
@@ -1183,7 +1213,7 @@ shape the hardware produces:
 Commit both. If a future Droidian changes these formats, the tests fail here
 rather than in a flash phase.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -1213,7 +1243,7 @@ expect_absent  "off invents no versions"  /tmp/p-off.$$ 'oos_version=9'
 rm -f /tmp/p-dro.$$ /tmp/p-fb.$$ /tmp/p-off.$$
 ```
 
-- [ ] **Step 3: Write lib/probe.sh**
+- [x] **Step 3: Write lib/probe.sh**
 
 ```bash
 #!/usr/bin/env bash
@@ -1290,7 +1320,7 @@ probe_all() {
 "${@:-probe_all}"
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 chmod +x lib/probe.sh
@@ -1299,7 +1329,7 @@ chmod +x lib/probe.sh
 
 Expected: `passed=50 failed=0`.
 
-- [ ] **Step 5: Run it against the real phone**
+- [x] **Step 5: Run it against the real phone**
 
 ```bash
 ./lib/probe.sh probe_all
@@ -1309,7 +1339,7 @@ Expected: `state=droidian`, `oos_version=9.0.17`, a `pkg_` line per adaptation
 package, `probe_complete=yes`. If any line reads `unknown` that a fixture says
 should parse, fix the parser — not the fixture.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/probe.sh tests
@@ -1340,7 +1370,7 @@ it, or when the probe shows the device does not already carry it. When
 `probe_complete=no`, every target is requested — an unreadable device is never
 evidence that something can be skipped.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -1398,7 +1428,7 @@ rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ \
       /tmp/m-empty.$$ /tmp/pl-empty.$$ /tmp/rt.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -1406,7 +1436,7 @@ rm -f /tmp/pr-ok.$$ /tmp/pl-ok.$$ /tmp/pr-part.$$ /tmp/pl-part.$$ \
 
 Expected: the new cases FAIL — `provision.sh` does not exist.
 
-- [ ] **Step 3: Write provision.sh**
+- [x] **Step 3: Write provision.sh**
 
 ```bash
 #!/usr/bin/env bash
@@ -1497,7 +1527,7 @@ fi
 die "flash phases are not implemented yet (Tasks 10-13); use --plan-only"
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 chmod +x provision.sh
@@ -1506,7 +1536,7 @@ chmod +x provision.sh
 
 Expected: `passed=57 failed=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add provision.sh tests
@@ -1549,7 +1579,7 @@ scp /tmp/op6t.bundle HOST:/tmp/
 ssh HOST 'cd ~/oneplus6t && git fetch -q /tmp/op6t.bundle && git reset -q --hard FETCH_HEAD'
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `remote_build` runs through a command seam so the test needs no second machine.
 
@@ -1605,7 +1635,7 @@ expect_rc "a failing worker fails the run" 1 "$?"
 rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/rb.$$ /tmp/rb2.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -1613,7 +1643,7 @@ rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/rb.$$ /tmp/rb2.$
 
 Expected: the remote cases FAIL — the flag does not exist.
 
-- [ ] **Step 3: Implement remote_build**
+- [x] **Step 3: Implement remote_build**
 
 Add to `provision.sh` above the argument loop:
 
@@ -1685,7 +1715,7 @@ if [ "$MODE" = remote ]; then
 fi
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -1693,7 +1723,7 @@ fi
 
 Expected: `passed=67 failed=0`.
 
-- [ ] **Step 5: Run it against the real worker**
+- [x] **Step 5: Run it against the real worker**
 
 ```bash
 ./provision.sh --plan-only > /tmp/plan.json
@@ -1706,7 +1736,7 @@ Expected: taichi updates to this commit, builds only what the plan asked for,
 and `manifest.json` arrives locally. This is the first time the two halves run
 together on real machines.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add provision.sh tests/run-tests.sh
@@ -1736,7 +1766,7 @@ destructive step gets wrongly skipped, and it is fully testable with no phone.
 Getting it right first means the dangerous code arrives into a harness that
 already refuses to run it under the wrong conditions.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -1791,7 +1821,7 @@ bash "$PH" phase_should_skip boot /tmp/ph-probe.$$ "$HERE/fixtures/manifest.json
 rm -f /tmp/ph-probe.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -1799,7 +1829,7 @@ rm -f /tmp/ph-probe.$$
 
 Expected: the phase cases FAIL — `lib/phases.sh` does not exist.
 
-- [ ] **Step 3: Write lib/phases.sh with empty phase bodies**
+- [x] **Step 3: Write lib/phases.sh with empty phase bodies**
 
 ```bash
 #!/usr/bin/env bash
@@ -1887,7 +1917,7 @@ run_phases() {
 "${@:-run_phases}"
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 chmod +x lib/phases.sh
@@ -1896,7 +1926,7 @@ chmod +x lib/phases.sh
 
 Expected: `passed=77 failed=0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib/phases.sh tests/run-tests.sh
@@ -1924,7 +1954,7 @@ These write only to `boot_<slot>`, `vbmeta_<slot>` and the slot flag. None of
 them touches the partition table or user data, so they are safe to exercise on
 the phone before the destructive work exists.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/run-tests.sh`:
 
@@ -1957,7 +1987,7 @@ rm -f "$flog" /tmp/fake-fastboot.$$ /tmp/ph-boot.$$ /tmp/ph-act.$$
 `dtbo` and that would break Droidian, which reuses OxygenOS 9's; and
 `fastboot -w` bootloops this device.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -1965,7 +1995,7 @@ rm -f "$flog" /tmp/fake-fastboot.$$ /tmp/ph-boot.$$ /tmp/ph-act.$$
 
 Expected: the new cases FAIL — the phases are still no-ops.
 
-- [ ] **Step 3: Implement the three phases**
+- [x] **Step 3: Implement the three phases**
 
 Replace the stubs in `lib/phases.sh`:
 
@@ -2001,7 +2031,7 @@ phase_verify() {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -2009,7 +2039,7 @@ phase_verify() {
 
 Expected: `passed=84 failed=0`.
 
-- [ ] **Step 5: Run the non-destructive phases on the real phone**
+- [x] **Step 5: Run the non-destructive phases on the real phone**
 
 This settles the outstanding divergence: the device is running a `boot.img`
 built from a DT patch that was later reverted.
@@ -2028,7 +2058,7 @@ python3 -c "import json;print(json.load(open('droidian/manifest.json'))['artifac
 sha256sum droidian/out/images/boot.img
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/phases.sh tests/run-tests.sh
@@ -2055,7 +2085,7 @@ the second bootloops this device."
 **Destructive:** writes `userdata`. Everything on the Droidian side is lost;
 that is the intent, since `userdata.img` carries the whole rootfs.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```bash
 # data skips only when EVERY manifest package matches the device.
@@ -2092,7 +2122,7 @@ expect_absent  "data never passes -w"   "$flog" '-w'
 rm -f /tmp/m-pkgs.$$ /tmp/ph-data.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -2100,7 +2130,7 @@ rm -f /tmp/m-pkgs.$$ /tmp/ph-data.$$
 
 Expected: the version-comparison cases FAIL — the predicate checks one name.
 
-- [ ] **Step 3: Tighten the predicate and implement the phase**
+- [x] **Step 3: Tighten the predicate and implement the phase**
 
 Replace the `data)` branch in `phase_should_skip`:
 
@@ -2150,7 +2180,7 @@ phase_data() {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -2167,7 +2197,7 @@ PHASE=verify ./provision.sh --artifacts droidian
 
 Expected: `ALL PASS`, on a first boot, with no manual step.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add lib/phases.sh tests/run-tests.sh
@@ -2197,7 +2227,7 @@ and this repo exists because `edl qfil` destroyed that table once already.
 Not to protect data — there is none worth keeping — but so the step is never
 reached by accident through a wrong skip predicate.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```bash
 rlog2=$(mktemp)
@@ -2229,7 +2259,7 @@ expect_absent  "edl never calls qfil"              "$rlog2" 'qfil'
 rm -f "$rlog2" /tmp/fake-restore.$$ /tmp/ph-edl.$$ /tmp/ph-edl2.$$
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 ./tests/run-tests.sh
@@ -2237,7 +2267,7 @@ rm -f "$rlog2" /tmp/fake-restore.$$ /tmp/ph-edl.$$ /tmp/ph-edl2.$$
 
 Expected: FAIL — `phase_edl` is still a stub.
 
-- [ ] **Step 3: Implement phase_edl**
+- [x] **Step 3: Implement phase_edl**
 
 ```bash
 # THE HIGHEST-RISK STEP IN THIS PROJECT. It rewrites the LUN0 partition table.
@@ -2266,7 +2296,7 @@ MSG
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 ./tests/run-tests.sh
@@ -2306,7 +2336,7 @@ Expected: `linuxroot` exists, `userdata` is about half its previous size, and
 `system_a` is still present. If `system_a` is missing the LUN0 table is damaged
 and the recovery path is `RELEASE=oos11 restore-android.py` from EDL.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add lib/phases.sh tests/run-tests.sh
@@ -2330,7 +2360,7 @@ hardware. The gate is not about protecting data -- there is none worth keeping
 - Produces: the default `provision.sh` path — probe, build remotely if
   `BUILD_HOST` is set, run every phase, verify.
 
-- [ ] **Step 1: Wire the phases into provision.sh**
+- [x] **Step 1: Wire the phases into provision.sh**
 
 Replace the trailing `die "flash phases are not implemented yet..."` with:
 
@@ -2348,7 +2378,7 @@ fi
 "$HERE/lib/phases.sh" run_phases "$PROBE_FILE" "$MANIFEST"
 ```
 
-- [ ] **Step 2: Test that a missing manifest stops before any phase**
+- [x] **Step 2: Test that a missing manifest stops before any phase**
 
 ```bash
 printf 'state=droidian\nprobe_complete=yes\n' > /tmp/pr-nm.$$
@@ -2360,7 +2390,7 @@ rm -f /tmp/pr-nm.$$ /tmp/nm.$$
 
 Expected after implementing: `passed=96 failed=0`.
 
-- [ ] **Step 3: The acceptance run**
+- [x] **Step 3: The acceptance run**
 
 From a booted Droidian, with everything already correct, this must do almost
 nothing — that is the proof skip detection works:
@@ -2379,12 +2409,12 @@ PHASE=verify ./provision.sh          # must FAIL
 BUILD_HOST=taichi ./provision.sh     # must repair
 ```
 
-- [ ] **Step 4: Document it**
+- [x] **Step 4: Document it**
 
 Update the pipeline table in `README.md` so `build.sh` and `provision.sh` read
 **works**, and remove the note saying they are not written yet.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add provision.sh tests/run-tests.sh README.md

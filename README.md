@@ -33,14 +33,8 @@ split by role:
 | Script | Runs on | Does | Status |
 |---|---|---|---|
 | `check-env.sh [build\|flash\|all]` | either | verifies host prerequisites | **works** |
-| `build.sh [--plan F \| targets…]` | worker | builds artifacts; never touches a phone | **planned** |
-| `provision.sh` | the machine with the phone | probes, decides, flashes, verifies | **planned** |
-
-> `build.sh` and `provision.sh` are **not written yet** — the design is in
-> [`docs/specs/2026-09-04-provisioning-pipeline-design.md`](docs/specs/2026-09-04-provisioning-pipeline-design.md).
-> Until they land, use the individual scripts: `droidian/build-kernel.sh`,
-> `droidian/build-rootfs.sh`, `droidian/build-camera.sh`, `droidian/flash.sh`
-> and `restore-android.py`. The usage below describes the intended interface.
+| `build.sh [--plan F \| targets…]` | worker | builds artifacts; never touches a phone | **works** |
+| `provision.sh` | the machine with the phone | probes, decides, flashes, verifies | **works** |
 
 Building needs cores and a container runtime; flashing needs the phone. They
 are rarely the same machine, so the decision of *what to build* stays with the
@@ -56,7 +50,7 @@ side that can see the device, and the building goes to the side with the CPU:
 ./build.sh --plan plan.json                # builds only what is missing
 
 # back on the machine with the phone
-./provision.sh --artifacts ./out
+./provision.sh --artifacts .
 ```
 
 `plan.json` says *what needs building*, not what to flash, and it is small
@@ -68,9 +62,10 @@ split stays the primitive, so it works with no ssh trust between them.
 |---|---|
 | `--plan-only` | probe and emit `plan.json`; touch nothing |
 | `--artifacts DIR` | flash using prebuilt artifacts from `DIR` |
-| `BUILD_HOST=host` | build remotely and fetch the results automatically |
-| `VERIFY=1` | compare by full sha256 instead of cheap fingerprints |
-| `PHASE=name` | run a single phase (`edl`, `boot`, `data`, `activate`, `verify`) |
+| `--remote-build host` | build on a worker, fetch the results, and stop |
+| `BUILD_HOST=host` | build remotely, fetch, then flash and verify |
+| `PHASE=name` | run a single phase: `edl`, `boot`, `data`, `activate`, `verify` |
+| `--yes` | proceed past the destructive confirmation without a terminal |
 
 ### Skipping is decided by probing, never by a marker
 
@@ -298,7 +293,7 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 | Droidian display | working, and now survives a reinstall |
 | Droidian camera | working — `droidian/build-camera.sh` fixes the focus mode |
 | Adaptation packages | **built and verified on hardware** — `droidian/adaptation/` |
-| `build.sh` / `provision.sh` pipeline | designed, not built |
+| `build.sh` / `provision.sh` pipeline | works |
 | Flash LineageOS | not started |
 | Dual-boot Android + a self-built Linux | GPT layout done; `datapart=` mechanism verified, never applied |
 
