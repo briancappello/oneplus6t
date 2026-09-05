@@ -12,10 +12,12 @@ releases/
 *postmarketOS*.img
 *postmarketOS*.img.xz
 
-# Build output. build.sh writes artifacts and manifest.json here; they are
-# reproducible from the source commit the manifest records, so they are not
-# worth versioning and a stale one committed here is actively misleading.
+# Build output. build.sh writes artifacts under the paths below and the manifest
+# at the repo root, where provision.sh reads it. All of it is reproducible from
+# the source commit the manifest records, so none of it is worth versioning and
+# a stale one committed here is actively misleading.
 out/
+/manifest.json
 
 # Records that the operator accepted the destructive EDL warning on this
 # checkout. Local state, never shared.
