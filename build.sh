@@ -106,11 +106,16 @@ target_tree() {
 # target_files <name> — the actual files produced, expanding declared
 # directories. A .deb's name carries its version, so the files cannot simply
 # be the declared paths.
+#
+# From a directory, only the packages count. dpkg-buildpackage drops a .changes,
+# a .dsc, a .buildinfo, a .build and a build log beside every .deb, and recording
+# those as artifacts made the manifest describe the build's paperwork as though
+# it were something installable on a phone.
 target_files() {
     local o
     for o in $(target_outputs "$1"); do
         if [ -d "$OUT/$o" ]; then
-            find "$OUT/$o" -type f 2>/dev/null | sed "s|^$OUT/||"
+            find "$OUT/$o" -type f -name '*.deb' 2>/dev/null | sed "s|^$OUT/||"
         elif [ -e "$OUT/$o" ]; then
             printf '%s\n' "$o"
         fi
@@ -178,9 +183,21 @@ run_target() {
     [ -n "$row" ] || { echo "build.sh: unknown target: $name" >&2; return 1; }
     IFS='|' read -r name deps out tree cmd <<< "$row"
 
+    # A directory output is cleared first, so it holds what this build produced
+    # and not also what every previous one did. Left to accumulate, it collects
+    # one .deb per version ever built, and a manifest naming two versions of the
+    # same package describes a device that cannot exist -- which is how skip_data
+    # stops being able to skip. This belongs to the output, not to the builder,
+    # so it happens whichever one is about to run.
+    local o
+    for o in $out; do
+        if [ -d "${OUT:?}/$o" ]; then rm -rf "${OUT:?}/$o"; fi
+        mkdir -p "$OUT/$(dirname "$o")"
+    done
+
     if [ -n "$FAKE_BUILD" ]; then
-        local o abs=""
-        for o in $out; do mkdir -p "$OUT/$(dirname "$o")"; abs="$abs $OUT/$o"; done
+        local abs=""
+        for o in $out; do abs="$abs $OUT/$o"; done
         FT_NAME="$name" FT_OUTPUTS="$abs" "$FAKE_BUILD"
     else
         if [ -z "$out" ]; then
@@ -188,8 +205,6 @@ run_target() {
             return 1
         fi
         [ -x "$ROOT/$cmd" ] || { echo "build.sh: build command not found: $cmd" >&2; return 1; }
-        local o
-        for o in $out; do mkdir -p "$OUT/$(dirname "$o")"; done
         echo "build.sh: building $name with $cmd"
         ( cd "$ROOT" && "./$cmd" )
     fi
@@ -229,6 +244,17 @@ try:
 except Exception:
     doc = {}
 artifacts = doc.get("artifacts", {})
+rows_read = [l.rstrip("\n").split("\t") for l in open(rows) if l.strip()]
+
+# Entries for targets built this run are replaced, not merged into. Merging by
+# path meant a package whose filename carried a version could never be
+# superseded: the old path was still a key, so the manifest kept claiming an
+# artifact that this build did not produce and the output directory no longer
+# held. Targets NOT built this run are still preserved -- that is the point of
+# reading the existing file at all.
+rebuilt = {r[1] for r in rows_read}
+artifacts = {p: a for p, a in artifacts.items() if a.get("target") not in rebuilt}
+
 with open(rows) as fh:
     for line in fh:
         path, target, sha, size, src, ver = line.rstrip("\n").split("\t")

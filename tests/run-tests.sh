@@ -189,6 +189,40 @@ printf '{"build":["camera"],"force":true}\n' > /tmp/b-plan2.$$
 build_once --plan /tmp/b-plan2.$$ > /dev/null 2>&1
 expect_contains "a forcing plan rebuilds" "$ftlog" 'camera'
 
+# A directory output holds the package AND everything dpkg drops beside it, and
+# it keeps holding the previous build's packages unless someone clears it. Both
+# leak into the manifest, and a manifest naming two versions of one package
+# describes a device that cannot exist -- which is exactly what stops skip_data
+# from ever skipping again.
+dout=/tmp/b-dout.$$
+rm -rf "$dout"
+: > "$ftlog"
+SRC="$srcrepo" OUT="$dout" FAKE_BUILD="$ROOT/tests/fixtures/fake-target-dir" \
+    FT_LOG="$ftlog" FT_RC=0 FT_DEB_VERSION=1.0.0 "$BUILD" camera > /dev/null 2>&1
+python3 -c "
+import json
+a = json.load(open('$dout/manifest.json'))['artifacts']
+print('deb=' + str(any(p.endswith('thing_1.0.0_arm64.deb') for p in a)))
+print('junk=' + str(any(p.endswith(('.changes', '.dsc', 'build.log')) for p in a)))
+" > /tmp/b-d1.$$ 2>&1
+expect_contains "a directory output records its packages" /tmp/b-d1.$$ 'deb=True'
+expect_contains "and not the build detritus beside them" /tmp/b-d1.$$ 'junk=False'
+
+FORCE=1 SRC="$srcrepo" OUT="$dout" FAKE_BUILD="$ROOT/tests/fixtures/fake-target-dir" \
+    FT_LOG="$ftlog" FT_RC=0 FT_DEB_VERSION=2.0.0 "$BUILD" camera > /dev/null 2>&1
+python3 -c "
+import json
+a = json.load(open('$dout/manifest.json'))['artifacts']
+print('new=' + str(any(p.endswith('thing_2.0.0_arm64.deb') for p in a)))
+print('stale=' + str(any(p.endswith('thing_1.0.0_arm64.deb') for p in a)))
+" > /tmp/b-d2.$$ 2>&1
+expect_contains "a rebuild records the new package" /tmp/b-d2.$$ 'new=True'
+expect_contains "and forgets the one it replaced"   /tmp/b-d2.$$ 'stale=False'
+[ -e "$dout/droidian/out-camera/thing_1.0.0_arm64.deb" ] \
+    && { echo "  FAIL  the output directory is cleared before a rebuild"; fail=$((fail+1)); } \
+    || { echo "  PASS  the output directory is cleared before a rebuild"; pass=$((pass+1)); }
+rm -rf "$dout" /tmp/b-d1.$$ /tmp/b-d2.$$
+
 rm -rf "$bout" "$srcrepo" "$ftlog" /tmp/b-m1.$$ /tmp/b-m2.$$ /tmp/b-m3.$$ \
        /tmp/b-m4.$$ /tmp/b-m5.$$ /tmp/b-man.$$ /tmp/b-plan.$$ /tmp/b-plan2.$$ \
        /tmp/b-bad1.$$ /tmp/b-junk.$$ /tmp/b-p1.$$ /tmp/b-p2.$$ /tmp/b-p3.$$ /tmp/b-p4.$$

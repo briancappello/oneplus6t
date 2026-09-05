@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Like fake-target, but produces a DIRECTORY of build output the way the real
+# .deb-producing targets do: the package itself plus the detritus dpkg leaves
+# beside it. FT_DEB_VERSION picks the version, so a second run can stand in for
+# a rebuild that supersedes the first.
+set -euo pipefail
+printf '%s\n' "${FT_NAME:?FT_NAME must be set}" >> "${FT_LOG:?FT_LOG must be set}"
+ver="${FT_DEB_VERSION:-1.0.0}"
+for out in ${FT_OUTPUTS:-}; do
+    mkdir -p "$out"
+    printf 'deb\n'   > "$out/thing_${ver}_arm64.deb"
+    printf 'dbg\n'   > "$out/thing-dbgsym_${ver}_arm64.deb"
+    printf 'log\n'   > "$out/build.log"
+    printf 'chg\n'   > "$out/thing_${ver}_arm64.changes"
+    printf 'src\n'   > "$out/thing_${ver}.dsc"
+done
+exit "${FT_RC:-0}"
