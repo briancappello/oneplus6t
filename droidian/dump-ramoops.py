@@ -19,6 +19,7 @@ Address comes from the device tree, not guesswork:
         };
 """
 
+import os
 import re
 import sys
 
@@ -34,7 +35,7 @@ RAMOOPS_SIZE = 0x00400000
 OUT = "/home/brian/oneplus6t/droidian/out/ramoops.bin"
 
 
-def main():
+def dump(out=OUT, reset=False):
     cdc = usb_class(portconfig=default_ids, loglevel=40, serial_number=None)
     sh = sahara(cdc, loglevel=40)
     sh.programmer = ""
@@ -57,24 +58,63 @@ def main():
         sys.exit(f"unexpected sahara response: {res['cmd']}")
 
     print(f"reading {RAMOOPS_SIZE // 1024} KB at {RAMOOPS_BASE:#x}")
-    with open(OUT, "wb") as wf:
+    with open(out, "wb") as wf:
         sh.read_memory(RAMOOPS_BASE, RAMOOPS_SIZE, True, wf)
-    print(f"\nwrote {OUT}")
+    print(f"\nwrote {out}")
+    if reset:
+        # Sahara reset from memory-debug mode; the device boots normally (or
+        # lands in EDL 9008, which device.sh knows how to leave).
+        print("sahara reset:", sh.cmd_reset())
 
 
-def report(path=OUT):
-    """Pull readable kernel log lines out of the raw ramoops blob."""
+# Zone layout, from the DT node and ramoops_probe(): the dump records come
+# first and take whatever is left after the fixed zones, then console, ftrace,
+# pmsg. Each zone is a persistent_ram ring: sig, start, size, then data.
+ZONES = {
+    "console": (0x180000, 0x40000),
+    "ftrace":  (0x1C0000, 0x40000),
+    "pmsg":    (0x200000, 0x200000),
+}
+PERSISTENT_RAM_SIG = 0x43474244   # "DBGC"
+
+
+def zone(data, name):
+    """The ring's contents in write order, or None if the zone is not valid."""
+    import struct
+    off, size = ZONES[name]
+    sig, start, used = struct.unpack_from("<III", data, off)
+    if sig != PERSISTENT_RAM_SIG:
+        return None
+    buf = data[off + 12: off + size]
+    cap = size - 12
+    used = min(used, cap); start = min(start, cap)
+    if used < cap:
+        return buf[:used]
+    return buf[start:] + buf[:start]
+
+
+def report(path=OUT, outdir=None):
+    """Write console.txt and pmsg.txt next to the blob; print what was found."""
     data = open(path, "rb").read()
-    text = data.decode("utf-8", "replace")
-    # kernel console lines look like "[  12.345678] message"
-    lines = re.findall(r"\[\s*\d+\.\d+\][^\r\n\x00]{0,300}", text)
-    print(f"{len(lines)} kernel log lines recovered\n")
-    return lines
+    outdir = outdir or os.path.dirname(path)
+    for name in ("console", "pmsg"):
+        z = zone(data, name)
+        if z is None:
+            print(f"{name}: no valid zone (signature missing)")
+            continue
+        text = z.decode("utf-8", "replace").replace("\x00", "")
+        dst = os.path.join(outdir, f"{name}.txt")
+        open(dst, "w").write(text)
+        print(f"{name}: {len(z)} bytes, {text.count(chr(10))} lines -> {dst}")
 
 
 if __name__ == "__main__":
-    if "--report" in sys.argv:
-        for line in report():
-            print(line)
-    else:
-        main()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--reset", action="store_true", help="Sahara-reset the device after the dump")
+    ap.add_argument("--report", action="store_true", help="only parse an existing blob")
+    a = ap.parse_args()
+    if not a.report:
+        dump(a.out, a.reset)
+    report(a.out)
