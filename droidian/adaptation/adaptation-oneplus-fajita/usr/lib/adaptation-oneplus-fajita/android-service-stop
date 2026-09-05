@@ -1,0 +1,38 @@
+#!/bin/sh
+# Stop an android-service@ unit, except during system shutdown.
+#
+# android-service.sh <name> stop asks Android to stop one service and then
+# waits on binder/property round-trips for it. That is the right thing when the
+# unit is being restarted on its own. During a system shutdown it is redundant
+# and sometimes very expensive: Android's init stops every one of its services
+# itself when it receives sys.powerctl, and reports doing so in about 3s.
+#
+# Doing both is what made shutdown bimodal. Runs where this path engaged took
+# ~200-250s, against ~41-50s where it did not, on the same configuration:
+#
+#   init: Received control message 'stop' for 'vendor.hwcomposer-2-1'  +9.3s
+#   init: processing action (init.svc.vendor.hwcomposer-2-1=stopped)  +15.5s
+#   kernel: binder: undelivered death notification                    +12.2s
+#
+# These units are ordered After=lxc@android.service, so they stop before the
+# container. Skipping the individual stop leaves the container's own shutdown
+# to do it, which is both faster and the path Android actually supports.
+set -u
+
+# Two signals, because one is not enough. is-system-running only reports
+# "stopping" once the transaction is under way, and these units are stopped
+# early enough to miss it -- a run where that happened took 165s against 27-41s
+# for runs where it did not. The queued job is visible sooner.
+is_shutting_down() {
+    [ "$(systemctl is-system-running 2>/dev/null)" = "stopping" ] && return 0
+    systemctl list-jobs 2>/dev/null \
+        | grep -qE '(reboot|poweroff|halt|kexec|shutdown)\.target' && return 0
+    return 1
+}
+
+if is_shutting_down; then
+    echo "android-service-stop: system is shutting down; leaving ${1:-?} to Android's own shutdown"
+    exit 0
+fi
+
+exec /usr/lib/halium-wrappers/android-service.sh "${1:?service name required}" stop

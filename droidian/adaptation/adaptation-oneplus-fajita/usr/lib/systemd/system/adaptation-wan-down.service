@@ -1,0 +1,15 @@
+[Unit]
+Description=Down the IPA WAN interface before the modem is torn down (fajita)
+# After= is reversed on shutdown, so ordering after these stops this unit
+# before them -- and therefore before the modem subsystem teardown that
+# otherwise closes rmnet_ipa0 while its transmit queue is wedged.
+After=ModemManager.service NetworkManager.service networking.service lxc@android.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/lib/adaptation-oneplus-fajita/wan-down
+
+[Install]
+WantedBy=multi-user.target

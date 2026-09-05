@@ -1,0 +1,29 @@
+#!/bin/sh
+# Bring the IPA WAN interface down early, before the modem subsystem is torn
+# down underneath it.
+#
+# rmnet_ipa0 is a zombie on this device: it comes up, carries 0 packets in
+# either direction for the whole uptime, and the modem sits disabled and
+# powered off. It is still registered with the IPA driver, so when the modem
+# subsystem shuts down the driver closes it as part of SSR -- and that
+# intermittently wedges:
+#
+#   NETDEV WATCHDOG: rmnet_ipa0 (): transmit queue 0 timed out
+#   ipa-wan __ipa_wwan_close:1056 rmnet_ipa0: ipa3_deregister_intf failed -22
+#
+# costing ~30s there and dragging the modem's own shutdown_ack past its
+# timeout. Shutdowns where this path engaged measured ~220s; where it did not,
+# 27-42s, on identical configuration.
+#
+# Downing it here happens while the system is still healthy and the modem is
+# still up, so the close is an ordinary one rather than one racing SSR.
+set -u
+
+for iface in rmnet_ipa0; do
+    [ -e "/sys/class/net/$iface" ] || continue
+    ip link set "$iface" down 2>/dev/null \
+        && echo "wan-down: $iface down" \
+        || echo "wan-down: could not down $iface"
+done
+
+exit 0

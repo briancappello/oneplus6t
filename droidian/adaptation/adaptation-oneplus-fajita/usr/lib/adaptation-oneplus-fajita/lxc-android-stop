@@ -1,0 +1,45 @@
+#!/bin/sh
+# Stop the Android container, and notice when it has actually stopped.
+#
+# Replaces the stock /usr/lib/lxc-android/lxc-android-stop, which is:
+#
+#     setprop sys.powerctl shutdown
+#     lxc-wait -n android -s "STOPPED" -t 30
+#
+# The request is right; the wait is not. lxc-wait cannot observe a container
+# that stops while it is waiting -- the container's command socket disappears
+# underneath it and it returns EAGAIN:
+#
+#   lxc-wait: android: lxc_cmd_sock_rcv_state: Resource temporarily unavailable
+#   lxc-wait: android: lxc_wait: Failed to receive state from monitor
+#
+# so it burns its full timeout and is SIGKILLed, every shutdown, while the
+# container it was watching stopped seconds earlier. Android itself reports
+# finishing in about 3s (powerctl_shutdown_time_ms:3130), so that was ~23s of
+# pure waiting on a broken observation.
+#
+# Poll the state directly instead. A vanished container reads as empty, which
+# is success here -- the whole point is that it is gone.
+set -u
+
+/usr/bin/setprop sys.powerctl shutdown 2>/dev/null || true
+
+# Bounded so a container that genuinely refuses to die still hands back to
+# systemd rather than hanging the shutdown. 20s is generous against a measured
+# ~3s; TimeoutStopSec remains the backstop behind it.
+i=0
+while [ "$i" -lt 100 ]; do
+    state=$(lxc-info -n android -s -H 2>/dev/null || true)
+    case "$state" in
+        STOPPED|"") break ;;
+    esac
+    i=$((i + 1))
+    sleep 0.2
+done
+
+# Teardown mapped super partition, as the stock script does.
+if [ -e /dev/disk/by-partlabel/super ]; then
+    dmsetup remove /dev/mapper/dynpart-* 2>/dev/null || true
+fi
+
+exit 0
