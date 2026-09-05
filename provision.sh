@@ -316,25 +316,26 @@ if [ "$MODE" = artifacts ]; then
     
     # Phase 5: verify - verify installation (never skipped)
     if [ -z "$PHASE" ] || [ "$PHASE" = "verify" ]; then
-        echo "    verify: checking installation"
+        echo "    verify: waiting for the device"
         # Wait for the device to come back on the USB network. The bounds are
         # tunable because how long a real phone takes to reappear varies with
         # the state it was flashed from; 60s was measured, not assumed.
         attempts=0
         while [ "$attempts" -lt "${VERIFY_ATTEMPTS:-30}" ]; do
-            if device-ssh -r 'echo ok' >/dev/null 2>&1; then
-                echo "    verify: device reachable via SSH"
-                break
-            fi
+            device-ssh -r 'echo ok' >/dev/null 2>&1 && break
             attempts=$((attempts + 1))
             sleep "${VERIFY_DELAY:-2}"
         done
+        [ "$attempts" -lt "${VERIFY_ATTEMPTS:-30}" ] \
+            || die "verify: the device never came back, so nothing was verified"
 
-        if [ "$attempts" -eq "${VERIFY_ATTEMPTS:-30}" ]; then
-            echo "    verify: WARNING - device not reachable"
-        else
-            echo "    verify: installation successful"
-        fi
+        # Answering a ping is not an install. verify-device.sh asserts the
+        # user-visible outcomes, and the negative ones too, so its verdict is
+        # this phase's verdict: saying "successful" on the strength of an echo
+        # is the kind of claim this pipeline exists to stop making.
+        echo "    verify: device reachable, checking the install"
+        "$HERE/droidian/verify-device.sh" 2>&1 | sed 's/^/    /' \
+            || die "verify: the device is reachable but the install is not correct"
     fi
     
     echo ">>> done"

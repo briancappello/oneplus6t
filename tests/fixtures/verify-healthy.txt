@@ -1,0 +1,21 @@
+phosh=active
+restarts=1
+node /dev/hwbinder 666 root:root
+node /dev/kgsl-3d0 666 system:system
+node /dev/diag 660 system:root
+node /dev/input/event0 660 root:android_input
+gl=1
+pkgs=3
+divert=1
+camerr=0
+setuid=4755
+hhp=active
+diagread=no
+diagwrite=no
+diagrule=0
+rules=48
+stale=no
+epoch=1788570946
+clockfloor=active
+cycles=0
+timewarp=0

@@ -12,7 +12,11 @@
 # after it, so the checks would silently start testing the wrong values.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SSH="$(dirname "$HERE")/.venv/bin/python $HERE/ssh.py"
+# Resolved by name off PATH, like every other device-touching call in this repo.
+# That is what lets the test suite shadow it; hardcoding the interpreter path
+# here would have made this the one script a test could not keep off the phone.
+PATH="$PATH:$(dirname "$HERE")/bin"
+SSH=device-ssh
 fail=0
 ck() { if eval "$2"; then echo "  PASS  $1"; else echo "  FAIL  $1"; fail=1; fi; }
 

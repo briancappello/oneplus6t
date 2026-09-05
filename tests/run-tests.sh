@@ -349,7 +349,7 @@ touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
 touch /tmp/artifacts-test/droidian/userdata.img
 : > "$HW_LOG"
-FAKE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" \
+FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
 timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
 expect_rc "--artifacts mode exits 0" 0 "$rc"
 # rc=124 would mean a phase blocked waiting for a device. Bounded so that a
@@ -362,7 +362,27 @@ expect_contains "boot phase runs" /tmp/p-art.$$ 'boot:'
 expect_contains "data phase runs" /tmp/p-art.$$ 'data:'
 expect_contains "activate phase runs" /tmp/p-art.$$ 'activate:'
 expect_contains "verify phase runs" /tmp/p-art.$$ 'verify:'
-rm -rf /tmp/artifacts-test /tmp/p-art.$$
+# Reachability is not an install: the phase must run the real checks and
+# report their verdict, not announce success after an echo.
+expect_contains "verify asserts the install, not a ping" /tmp/p-art.$$ 'ALL PASS'
+
+# An unreachable device is a failed verification, not a warning. Exiting 0 here
+# reported a successful provision of a phone that never came back.
+: > "$HW_LOG"
+VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test \
+    --probe-file /tmp/pr-ok.$$ --phase verify > /tmp/p-unreach.$$ 2>&1; rc=$?
+expect_rc "an unreachable device fails verify" 1 "$rc"
+expect_contains "and says nothing was verified" /tmp/p-unreach.$$ 'nothing was verified'
+
+# Reachable but wrong must fail too. This is the case that used to answer an
+# echo and call the install successful.
+FAKE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
+    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    --phase verify > /tmp/p-bad.$$ 2>&1; rc=$?
+expect_rc "a reachable but incorrect install fails verify" 1 "$rc"
+expect_contains "and reports the failing checks" /tmp/p-bad.$$ 'FAILURES'
+
+rm -rf /tmp/artifacts-test /tmp/p-art.$$ /tmp/p-unreach.$$ /tmp/p-bad.$$
 
 # --phase flag runs only that phase
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n' > /tmp/pr-phase.$$
@@ -411,7 +431,7 @@ expect_absent "a refused run flashes nothing"      "$HW_LOG" 'fastboot flash'
 : > "$HW_LOG"
 # The device never answers here, so cap the verify wait; this case is about
 # consent, not about how long a real phone takes to come back.
-VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
+VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
 timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-des.$$ \
     --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
 expect_rc "--yes proceeds without a terminal" 0 "$rc"
@@ -492,7 +512,7 @@ chmod +x /tmp/fake-ssh.$$
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\n' > /tmp/pr-fm.$$
 : > "$rlog"; : > "$HW_LOG"
 BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
-    VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
+    VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
     timeout 60 "$PROV" --probe-file /tmp/pr-fm.$$ --phase verify \
     --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/fm.$$ 2>&1; rc=$?
 expect_rc "full mode needs no flag to say what to do" 0 "$rc"
