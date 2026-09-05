@@ -1,0 +1,41 @@
+#!/bin/sh
+# Put RCU grace-period pacing back to normal before the shutdown teardown.
+#
+# mobile-power-saver's system daemon writes, when the screen turns off:
+#
+#   /sys/module/rcutree/parameters/jiffies_till_first_fqs = 1000
+#   /sys/module/rcutree/parameters/jiffies_till_next_fqs  = 1000
+#
+# (the kernel clamps both to HZ, 300 here, so 1s). That is how often the RCU
+# grace-period kthread force-checks idle CPUs for quiescent states, and with
+# the screen off every CPU is idle, so every synchronize_rcu() in the kernel
+# waits ~1s+ per grace period instead of a few ms. Shutdown is a long serial
+# chain of them -- netdev unregister, cgroup and namespace teardown, socket
+# close -- so it balloons from ~30-45s to 215-250s, and the D-Bus calls inside
+# it time out at 25s along the way (gnome-session-ctl "Failed to start shutdown
+# target: Timeout", logind "Failed to abandon session scope").
+#
+# The daemon only undoes this in its GObject dispose, which never runs: it
+# handles SIGINT but not SIGTERM, and being D-Bus-activated it lives in
+# dbus.service's cgroup and is killed near the end of shutdown anyway.
+#
+# Measured on hardware, each a single-variable change:
+#   screen off, clocks restored, fqs left at 300    -> 232s
+#   screen off, clocks clamped, only fqs -> 1        -> 45.5s
+#   screen on, everything normal, only fqs -> 300    -> 252s
+#
+# 1 is where mobile-power-saver itself leaves it while the screen is on.
+set -u
+
+# Test seam: the parameter directory. The offline suite points it at a tmpdir.
+DIR="${ARU_DIR:-/sys/module/rcutree/parameters}"
+
+for p in jiffies_till_first_fqs jiffies_till_next_fqs; do
+    f="$DIR/$p"
+    [ -w "$f" ] || continue
+    echo 1 > "$f" \
+        && echo "rcu-unthrottle: $p -> 1" \
+        || echo "rcu-unthrottle: could not write $p"
+done
+
+exit 0

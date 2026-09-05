@@ -1,0 +1,17 @@
+[Unit]
+Description=Restore RCU grace-period pacing before shutdown teardown (fajita)
+Documentation=https://github.com/briancappello/oneplus6t
+# Deliberately no After= on anything that has stop work. Stop jobs run in
+# reverse After= order, so a unit nothing is ordered against gets its ExecStop
+# run the moment the shutdown transaction is queued -- before the user session,
+# the container and the network start tearing down under the throttled RCU
+# this undoes. See the script for the why.
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/lib/adaptation-oneplus-fajita/rcu-unthrottle
+
+[Install]
+WantedBy=multi-user.target

@@ -231,6 +231,25 @@ expect_absent "missing stamp never sets the clock" "$cf_log" 'SET '
 
 rm -f "$cf_stamp" "$cf_set" "$cf_log" "$cf_tk" /tmp/cf-old.$$ /tmp/cf-new.$$ /tmp/cf-nostamp.$$
 
+# RCU pacing: mobile-power-saver leaves jiffies_till_*_fqs at 1000 (clamped to
+# HZ) once the screen has been off, and shutdown under that takes ~4 minutes.
+# The ExecStop hook must put BOTH back, and must not fail on a kernel that
+# lacks the knob.
+RU="$ADAPT/adaptation-oneplus-fajita/usr/lib/adaptation-oneplus-fajita/rcu-unthrottle"
+ru_dir=$(mktemp -d)
+echo 300 > "$ru_dir/jiffies_till_first_fqs"; echo 300 > "$ru_dir/jiffies_till_next_fqs"
+ARU_DIR="$ru_dir" "$RU" > /tmp/ru-out.$$ 2>&1
+[ "$(cat "$ru_dir/jiffies_till_first_fqs")" = 1 ] && [ "$(cat "$ru_dir/jiffies_till_next_fqs")" = 1 ] \
+    && { echo "  PASS  throttled fqs pair is restored to 1"; pass=$((pass+1)); } \
+    || { echo "  FAIL  throttled fqs pair is restored to 1: $(cat "$ru_dir"/*)"; fail=$((fail+1)); }
+expect_contains "each restore is reported" /tmp/ru-out.$$ 'jiffies_till_next_fqs -> 1'
+
+rm -f "$ru_dir"/*
+ARU_DIR="$ru_dir" "$RU" > /tmp/ru-none.$$ 2>&1
+[ $? -eq 0 ] && { echo "  PASS  missing knob is a no-op, not a failure"; pass=$((pass+1)); } \
+    || { echo "  FAIL  missing knob is a no-op, not a failure"; fail=$((fail+1)); }
+rm -rf "$ru_dir" /tmp/ru-out.$$ /tmp/ru-none.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
