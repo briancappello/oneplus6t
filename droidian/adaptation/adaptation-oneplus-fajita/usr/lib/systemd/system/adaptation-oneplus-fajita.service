@@ -1,6 +1,10 @@
 [Unit]
 Description=Device adaptation for the OnePlus 6T (fajita)
 After=halium-hostdev-perms.service
+# apply edits /var/lib/lxc/android/config to bind a patched build.prop into the
+# container, so it has to run before anything reads that config. Without this
+# the two only happened to land in the right order.
+Before=lxc.service lxc@android.service
 
 [Service]
 Type=oneshot

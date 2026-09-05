@@ -1,5 +1,5 @@
 Package: adaptation-oneplus-fajita
-Version: 1.0.0
+Version: 1.2.0
 Architecture: all
 Maintainer: oneplus6t <https://github.com/briancappello/oneplus6t>
 Depends: halium-hostdev-perms, halium-oldkernel-compat, dpkg
