@@ -394,6 +394,59 @@ expect_absent "no confirmation is demanded when nothing is destroyed" /tmp/p-qui
 rm -rf /tmp/artifacts-test /tmp/pr-des.$$ /tmp/p-des.$$ /tmp/p-yes.$$ \
        /tmp/pr-quiet.$$ /tmp/p-quiet.$$
 
+# Remote builds. ssh and scp go through a command seam, so the whole transport
+# is exercised without a second machine -- including the two ways the worker is
+# put on the right commit, which is the part that would otherwise only ever be
+# tested by being wrong on taichi.
+rlog=/tmp/rlog.$$
+cat > /tmp/fake-ssh.$$ <<FS
+#!/usr/bin/env bash
+echo "SSH \$*" >> $rlog
+exit 0
+FS
+cat > /tmp/fake-scp.$$ <<FS
+#!/usr/bin/env bash
+echo "SCP \$*" >> $rlog
+exit 0
+FS
+chmod +x /tmp/fake-ssh.$$ /tmp/fake-scp.$$
+
+printf '{"build":["adaptation"],"force":false}\n' > /tmp/rp.$$
+: > "$rlog"; : > "$HW_LOG"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /tmp/rb.$$ 2>&1; rc=$?
+expect_rc "remote build succeeds"                 0 "$rc"
+expect_contains "the plan is copied over"         "$rlog" 'SCP'
+expect_contains "the worker is reset to a commit" "$rlog" 'reset -q --hard'
+expect_contains "prerequisites are checked first" "$rlog" 'check-env.sh build'
+expect_contains "build.sh runs with the plan"     "$rlog" 'build.sh --plan'
+expect_contains "artifacts are fetched back"      "$rlog" 'manifest.json'
+# A remote build touches no phone, so it must not require one to be attached.
+expect_absent  "a supplied plan probes no device" "$HW_LOG" 'device-ssh'
+
+# A published commit must go over origin, not by bundle: the bundle path exists
+# only for work deliberately kept unpushed.
+expect_contains "a published commit fetches from origin" "$rlog" 'git fetch -q origin'
+expect_absent  "a published commit sends no bundle"      "$rlog" 'op6t.bundle'
+
+: > "$rlog"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=0 \
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /dev/null 2>&1
+expect_contains "unpublished WIP goes by bundle"  "$rlog" 'op6t.bundle'
+expect_absent  "unpublished WIP does not ask origin for a commit it lacks" "$rlog" 'git fetch -q origin'
+
+# A worker that fails must fail the run, not silently continue to flashing.
+cat > /tmp/fake-ssh.$$ <<'FS'
+#!/usr/bin/env bash
+exit 3
+FS
+chmod +x /tmp/fake-ssh.$$
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /tmp/rb2.$$ 2>&1
+expect_rc "a failing worker fails the run" 1 "$?"
+expect_contains "and says which host"      /tmp/rb2.$$ 'taichi'
+rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/rb.$$ /tmp/rb2.$$
+
 echo
 echo ">>> lib/probe.sh tests"
 

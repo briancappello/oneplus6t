@@ -4,7 +4,7 @@
 #
 #   ./provision.sh --plan-only > plan.json   # probe and decide; touch nothing
 #   ./provision.sh --artifacts ./out         # flash using prebuilt artifacts
-#   BUILD_HOST=taichi ./provision.sh         # build remotely, fetch, flash
+#   ./provision.sh --remote-build taichi     # build on a worker, fetch the results
 #   PHASE=boot ./provision.sh                # run a single phase
 #   VERIFY=1 ./provision.sh                  # full sha256 instead of cheap probes
 #
@@ -15,7 +15,10 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST="${MANIFEST:-$HERE/droidian/manifest.json}"
+# The manifest is a contract between the two scripts, so this must be the file
+# build.sh actually writes -- it writes $OUT/manifest.json, and OUT is the repo
+# root. These two have already drifted apart once.
+MANIFEST="${MANIFEST:-$HERE/manifest.json}"
 PROBE_FILE=""
 MODE=full
 
@@ -75,6 +78,63 @@ ARTIFACTS=""
 PHASE=""
 ASSUME_YES="${ASSUME_YES:-}"
 
+SSH_CMD="${PROV_SSH:-ssh}"
+SCP_CMD="${PROV_SCP:-scp}"
+REMOTE_DIR="${REMOTE_DIR:-oneplus6t}"
+
+# Published commits go over origin; unpublished WIP goes by bundle.
+#
+# Both land the worker on an exact commit with an honest git state, which is the
+# whole point: an rsynced pile of files builds something no one can name
+# afterwards. Proven work is pushed, so the worker just fetches it and the trail
+# is auditable. The bundle is for work deliberately kept unpushed -- asking
+# origin for a commit it has never seen would simply fail.
+is_published() {
+    # Overridable so both transports are testable without a remote.
+    case "${PROV_PUBLISHED:-}" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+    git -C "$HERE" rev-parse --verify --quiet origin/main >/dev/null 2>&1 || return 1
+    git -C "$HERE" merge-base --is-ancestor HEAD origin/main 2>/dev/null
+}
+
+# remote_build <host> <plan-file> — build this commit on <host>, bring the
+# results back. Touches no phone at either end.
+remote_build() {
+    local host=$1 plan=$2 f
+    local sha; sha=$(git -C "$HERE" rev-parse HEAD)
+
+    "$SCP_CMD" -q "$plan" "$host:/tmp/plan.json" || die "could not copy the plan to $host"
+
+    if is_published; then
+        "$SSH_CMD" "$host" "cd $REMOTE_DIR && git fetch -q origin && git reset -q --hard $sha" \
+            || die "could not update $host to $sha from origin"
+    else
+        local bundle=/tmp/op6t-$$.bundle
+        git -C "$HERE" bundle create "$bundle" HEAD >/dev/null 2>&1 \
+            || die "could not create a git bundle"
+        "$SCP_CMD" -q "$bundle" "$host:/tmp/op6t.bundle" || die "could not copy the bundle to $host"
+        rm -f "$bundle"
+        "$SSH_CMD" "$host" "cd $REMOTE_DIR && git fetch -q /tmp/op6t.bundle && git reset -q --hard FETCH_HEAD" \
+            || die "could not update $host from the bundle"
+    fi
+
+    "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./check-env.sh build" \
+        || die "$host is missing build prerequisites"
+    "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./build.sh --plan /tmp/plan.json" \
+        || die "the build failed on $host"
+
+    # Bring back the manifest first: if it is absent the build produced nothing
+    # trustworthy and flashing must not proceed.
+    "$SCP_CMD" -q "$host:$REMOTE_DIR/manifest.json" "$HERE/manifest.json" \
+        || die "no manifest.json came back from $host"
+    for f in droidian/out/images/boot.img droidian/out/images/vbmeta.img droidian/userdata.img; do
+        mkdir -p "$(dirname "$HERE/$f")"
+        "$SCP_CMD" -q "$host:$REMOTE_DIR/$f" "$HERE/$f" 2>/dev/null || true
+    done
+}
+
 # confirm_destructive <line...> — name every irreversible step, then require an
 # explicit yes.
 #
@@ -107,14 +167,29 @@ while [ $# -gt 0 ]; do
         --probe-file) shift; PROBE_FILE="${1:?--probe-file needs a path}"; shift ;;
         --manifest)   shift; MANIFEST="${1:?--manifest needs a path}"; shift ;;
         --phase)      shift; PHASE="${1:?--phase needs a name}"; shift ;;
+        --remote-build) shift; REMOTE_HOST="${1:?--remote-build needs a host}"; MODE=remote; shift ;;
+        --plan-file)  shift; PLAN_FILE="${1:?--plan-file needs a path}"; shift ;;
         -h|--help)    sed -n '2,16p' "$0"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done
 
-if [ -z "$PROBE_FILE" ]; then
+# Probing reads the phone. A remote build handed an explicit plan has nothing
+# left to ask it, so requiring an attached device there would make the one mode
+# that never touches hardware the one that insists on it.
+if [ -z "$PROBE_FILE" ] && ! { [ "$MODE" = remote ] && [ -n "${PLAN_FILE:-}" ]; }; then
     PROBE_FILE=$(mktemp); trap 'rm -f "$PROBE_FILE"' EXIT
     "$HERE/lib/probe.sh" probe_all > "$PROBE_FILE" || die "probe failed"
+fi
+
+if [ "$MODE" = remote ]; then
+    if [ -z "${PLAN_FILE:-}" ]; then
+        PLAN_FILE=$(mktemp)
+        emit_plan "$(decide_build "$PROBE_FILE" "$MANIFEST")" > "$PLAN_FILE"
+    fi
+    remote_build "$REMOTE_HOST" "$PLAN_FILE"
+    echo "provision.sh: artifacts and manifest fetched from $REMOTE_HOST"
+    exit 0
 fi
 
 if [ "$MODE" = plan ]; then
