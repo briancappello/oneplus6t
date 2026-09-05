@@ -111,6 +111,13 @@ $(runtime) run --rm --arch arm64 \
 deb=$(ls "$OUT_DIR"/droidian-camera_*_arm64.deb 2>/dev/null | head -1)
 [ -n "$deb" ] || { echo "no droidian-camera package produced; see $LOG" >&2; exit 1; }
 
+# releng also emits a -dbgsym package. build-rootfs.sh installs every .deb it
+# finds here, so leaving it behind puts debug symbols on the phone; build.sh
+# then records it as an artifact, and skip_data starts asking the device for a
+# package the probe has never heard of and so can never skip. None of that is
+# wanted: this script produces one package, as its header says.
+rm -f "$OUT_DIR"/*-dbgsym_*.deb
+
 echo
 echo ">>> done"
 printf '    %s  %s bytes\n' "$deb" "$(stat -c%s "$deb")"
