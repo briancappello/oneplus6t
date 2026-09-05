@@ -131,11 +131,20 @@ except:
     return 0
 }
 
-# Skip activate phase if current-slot is already the Droidian slot.
+# Skip the activate phase when the phone is already running what it would have
+# been rebooted into.
+#
+# Activation is `fastboot reboot`, and every flash phase speaks fastboot, so a
+# device that answered the probe over ssh as Droidian had nothing written under
+# it this run and is already on the system we wanted. Any other state --
+# fastboot, edl, off, or unreadable -- is not evidence of that. This is the one
+# phase where being wrong is cheap in both directions: a needless reboot costs a
+# minute, a missed one leaves the phone sitting in the bootloader.
 skip_activate() {
-    local probe=$1 manifest=$2
-    # TODO: implement skip logic
-    return 1  # Don't skip for now
+    local probe=$1 manifest=$2 state
+    state=$(grep '^state=' "$probe" | cut -d= -f2)
+    [ "$state" = droidian ] || return 1
+    return 0
 }
 
 # Verify phase is never skipped.

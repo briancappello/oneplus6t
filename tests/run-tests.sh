@@ -284,6 +284,19 @@ for state in yes no unknown; do
 done
 rm -f /tmp/pr-boot.$$ /tmp/pr-noslot.$$ /tmp/pr-edl.$$
 
+# skip_activate: activation is `fastboot reboot`, so a phone that answered the
+# probe over ssh as Droidian was never in fastboot and has nothing to activate.
+for state in droidian fastboot edl off unknown; do
+    printf 'state=%s\nprobe_complete=yes\n' "$state" > /tmp/pr-act.$$
+    case "$state" in
+        droidian) expect_pred "activate skips when Droidian is already running" \
+                      skip skip_activate /tmp/pr-act.$$ "$MAN" ;;
+        *)        expect_pred "activate runs from $state" \
+                      run skip_activate /tmp/pr-act.$$ "$MAN" ;;
+    esac
+done
+rm -f /tmp/pr-act.$$
+
 # Skip detection: data phase skips when package versions match
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_camera=1.0.0\npkg_adaptation=1.0.0\n' > /tmp/pr-data-match.$$
 if skip_data /tmp/pr-data-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
