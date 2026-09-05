@@ -13,6 +13,14 @@ pass=0; fail=0
 # than a flag each test has to remember. Whether a device is attached and ready
 # is a readiness question, answered by ./device.sh state, never by this suite.
 export PATH="$HERE/fixtures/bin:$PATH"
+
+# The suite is sealed against reaching a phone. It must equally not write into
+# the working tree: a fetch test once replaced a 4 GB rootfs image with a
+# 22-byte fixture, because the code under test writes to real paths by default.
+# Snapshotting the tree beats enumerating what may change, which is exactly the
+# list nobody keeps up to date.
+TREE_BEFORE=/tmp/tree-before.$$
+git -C "$ROOT" status --porcelain --ignored > "$TREE_BEFORE" 2>/dev/null || : > "$TREE_BEFORE"
 export HW_LOG=/tmp/hw-log.$$
 : > "$HW_LOG"
 trap 'rm -f "$HW_LOG"' EXIT
@@ -531,10 +539,17 @@ FS
 chmod +x /tmp/fake-ssh.$$ /tmp/fake-scp.$$
 
 printf '{"build":["adaptation"],"force":false}\n' > /tmp/rp.$$
+# Fetching writes real files. Point it at a temp tree and give it a throwaway
+# copy of the manifest, so exercising a fetch cannot land on the working tree.
+fetchroot=/tmp/fetch.$$
+rm -rf "$fetchroot"; mkdir -p "$fetchroot"
+rman=/tmp/rman.$$
+cp "$ROOT/tests/fixtures/manifest.json" "$rman"
+export FETCH_ROOT="$fetchroot"
 : > "$rlog"; : > "$HW_LOG"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
     timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
-    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/rb.$$ 2>&1; rc=$?
+    --manifest "$rman" > /tmp/rb.$$ 2>&1; rc=$?
 expect_rc "remote build succeeds"                 0 "$rc"
 expect_contains "the plan is copied over"         "$rlog" 'SCP'
 expect_contains "the worker is reset to a commit" "$rlog" 'reset -q --hard'
@@ -563,11 +578,11 @@ chmod +x /tmp/fake-ssh.$$
 : > "$HW_LOG"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
     timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
-    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/rb3.$$ 2>&1; rc=$?
+    --manifest "$rman" > /tmp/rb3.$$ 2>&1; rc=$?
 expect_rc "a corrupt rootfs transfer fails the run" 1 "$rc"
 expect_contains "and says the hash disagreed" /tmp/rb3.$$ 'arrived corrupt'
 expect_absent  "and nothing is flashed"       "$HW_LOG" 'fastboot flash'
-[ -e "$ROOT/droidian/userdata.simg.part" ] \
+[ -e "$fetchroot/droidian/userdata.simg.part" ] \
     && { echo "  FAIL  a failed transfer leaves no .part behind"; fail=$((fail+1)); } \
     || { echo "  PASS  a failed transfer leaves no .part behind"; pass=$((pass+1)); }
 rm -f /tmp/rb3.$$
@@ -580,7 +595,7 @@ expect_absent  "a published commit sends no bundle"      "$rlog" 'op6t.bundle'
 : > "$rlog"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=0 \
     timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
-    --manifest "$ROOT/tests/fixtures/manifest.json" > /dev/null 2>&1
+    --manifest "$rman" > /dev/null 2>&1
 expect_contains "unpublished WIP goes by bundle"  "$rlog" 'op6t.bundle'
 expect_absent  "unpublished WIP does not ask origin for a commit it lacks" "$rlog" 'git fetch -q origin'
 
@@ -592,7 +607,7 @@ FS
 chmod +x /tmp/fake-ssh.$$
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
     timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ \
-    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/rb2.$$ 2>&1
+    --manifest "$rman" > /tmp/rb2.$$ 2>&1
 expect_rc "a failing worker fails the run" 1 "$?"
 expect_contains "and says which host"      /tmp/rb2.$$ 'taichi'
 rm -f /tmp/rb.$$ /tmp/rb2.$$
@@ -625,6 +640,8 @@ expect_rc "a missing manifest stops the run" 1 "$rc"
 expect_contains "and says why"               /tmp/nm.$$ 'no manifest'
 expect_contains "and names the file it wanted" /tmp/nm.$$ '/tmp/does-not-exist.json'
 expect_absent  "and flashes nothing"         "$HW_LOG" 'fastboot flash'
+unset FETCH_ROOT
+rm -rf "$fetchroot" "$rman"
 rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/pr-fm.$$ /tmp/fm.$$ /tmp/nm.$$
 
 echo
@@ -666,6 +683,18 @@ PROBE_STATE=off bash "$PROBE" probe_all > /tmp/p-off.$$ 2>&1
 expect_contains "off reports its state"   /tmp/p-off.$$ 'state=off'
 expect_contains "off is never complete"   /tmp/p-off.$$ 'probe_complete=no'
 rm -f /tmp/p-dro.$$ /tmp/p-fb.$$ /tmp/p-off.$$
+
+# Nothing in the working tree may have appeared, vanished or changed status.
+tree_after=/tmp/tree-after.$$
+git -C "$ROOT" status --porcelain --ignored > "$tree_after" 2>/dev/null || : > "$tree_after"
+dirty=$(diff "$TREE_BEFORE" "$tree_after" || true)
+rm -f "$TREE_BEFORE" "$tree_after"
+if [ -z "$dirty" ]; then
+    echo "  PASS  the suite writes nothing into the working tree"; pass=$((pass+1))
+else
+    echo "  FAIL  the suite wrote into the working tree:"; echo "$dirty" | sed 's/^/        /'
+    fail=$((fail+1))
+fi
 
 echo
 echo "passed=$pass failed=$fail"

@@ -80,6 +80,12 @@ ARTIFACTS=""
 PHASE="${PHASE:-}"
 ASSUME_YES="${ASSUME_YES:-}"
 
+# Where fetched artifacts land. Overridable for the same reason build.sh's OUT
+# is: without it the only place this can write is the working tree, and a test
+# that exercises fetching then writes over real build output. That is not
+# hypothetical -- it overwrote a 4 GB rootfs with a 22-byte fixture.
+FETCH_ROOT="${FETCH_ROOT:-$HERE}"
+
 SSH_CMD="${PROV_SSH:-ssh}"
 SCP_CMD="${PROV_SCP:-scp}"
 REMOTE_DIR="${REMOTE_DIR:-oneplus6t}"
@@ -129,15 +135,15 @@ remote_build() {
 
     # Bring back the manifest first: if it is absent the build produced nothing
     # trustworthy and flashing must not proceed.
-    "$SCP_CMD" -q "$host:$REMOTE_DIR/manifest.json" "$HERE/manifest.json" \
+    "$SCP_CMD" -q "$host:$REMOTE_DIR/manifest.json" "$MANIFEST" \
         || die "no manifest.json came back from $host"
 
     # The kernel is 32 MB, the rootfs around 9 GB. The small ones come over now;
     # the rootfs is left to start_rootfs_fetch, which runs only once something
     # has decided the rootfs is actually going to be flashed.
     for f in droidian/out/images/boot.img droidian/out/images/vbmeta.img; do
-        mkdir -p "$(dirname "$HERE/$f")"
-        "$SCP_CMD" -q "$host:$REMOTE_DIR/$f" "$HERE/$f" 2>/dev/null || true
+        mkdir -p "$(dirname "$FETCH_ROOT/$f")"
+        "$SCP_CMD" -q "$host:$REMOTE_DIR/$f" "$FETCH_ROOT/$f" 2>/dev/null || true
     done
 }
 
@@ -168,7 +174,7 @@ PY
 # because an interrupted transfer must not be mistakable for a finished one --
 # flashing a truncated rootfs gives a phone that will not boot and no hint why.
 fetch_rootfs() {
-    local host=$1 dest="$HERE/$ROOTFS_IMG" want got
+    local host=$1 dest="$FETCH_ROOT/$ROOTFS_IMG" want got
     mkdir -p "$(dirname "$dest")"
 
     # A rejected transfer must not leave its remains lying next to the real
@@ -179,14 +185,18 @@ fetch_rootfs() {
     fail_fetch() { rm -f "$dest.part"; die "$*"; }
 
     local bytes; bytes=$(manifest_field "$ROOTFS_IMG" bytes)
-    echo "    data: fetching the rootfs from $host, compressed (${bytes:-unknown} bytes on arrival)"
+    echo "    data: fetching the rootfs from $host; the count below is compressed"
+    echo "    data: it decompresses to ${bytes:-an unknown number of} bytes here"
 
     # dd reports throughput and total once a second. Without it this is several
     # silent minutes, which from the outside is indistinguishable from a hang --
     # and a step that cannot be told apart from a hang is one people interrupt.
+    # dd sits on the COMPRESSED side, so the bytes it counts are the bytes
+    # actually crossing the network. Downstream of zstd -dc it would report the
+    # decompressed size and quietly contradict the word "compressed".
     "$SSH_CMD" "$host" "zstd -c -T0 -3 $REMOTE_DIR/$ROOTFS_IMG" \
-        | zstd -dc \
-        | dd bs=4M status=progress of="$dest.part" \
+        | dd bs=1M status=progress \
+        | zstd -dc > "$dest.part" \
         || fail_fetch "the rootfs transfer from $host failed; nothing was flashed"
 
     # An exit status is a weak claim about a multi-gigabyte copy. The manifest
