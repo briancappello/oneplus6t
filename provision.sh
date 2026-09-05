@@ -244,6 +244,13 @@ if [ "$MODE" = artifacts ]; then
     if wanted boot     && ! skip_boot     "$PROBE_FILE" "$MANIFEST"; then run_boot=yes; fi
     if wanted data     && ! skip_data     "$PROBE_FILE" "$MANIFEST"; then run_data=yes; fi
     if wanted activate && ! skip_activate "$PROBE_FILE" "$MANIFEST"; then run_activate=yes; fi
+    # Anything that puts the phone in the bootloader has to take it back out
+    # again, whatever the probe said before the flash began. Deciding this from
+    # the probe alone would leave a freshly flashed phone sitting in fastboot,
+    # because the probe was read while it was still running Droidian.
+    if wanted activate && { [ "$run_boot" = yes ] || [ "$run_data" = yes ]; }; then
+        run_activate=yes
+    fi
 
     warn=()
     [ "$run_edl" = yes ] && warn+=(
@@ -276,6 +283,17 @@ if [ "$MODE" = artifacts ]; then
         echo "    edl: GPT rewrite complete"
     elif wanted edl; then
         echo "    edl: skipped (not positively known to need repartitioning)"
+    fi
+
+    # The boot and data phases speak fastboot, and the phone answers fastboot
+    # only from the bootloader. Getting there is a reboot, so it happens once,
+    # after consent and before the first write, rather than inside each phase --
+    # and it happens at all, which it did not: these phases used to fire
+    # fastboot at whatever state the phone happened to be in, so running this
+    # from a booted Droidian simply hung.
+    if [ "$run_boot" = yes ] || [ "$run_data" = yes ]; then
+        echo "    fastboot: putting the phone in the bootloader"
+        device-goto fastboot || die "the phone would not enter the bootloader; nothing was flashed"
     fi
 
     # Phase 2: boot - flash boot.img

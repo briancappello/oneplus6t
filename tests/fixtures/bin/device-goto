@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake device-goto. Records the transition instead of performing one.
+printf 'device-goto %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+exit "${FAKE_GOTO_RC:-0}"

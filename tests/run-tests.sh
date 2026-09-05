@@ -366,6 +366,34 @@ expect_contains "verify phase runs" /tmp/p-art.$$ 'verify:'
 # report their verdict, not announce success after an echo.
 expect_contains "verify asserts the install, not a ping" /tmp/p-art.$$ 'ALL PASS'
 
+# The boot and data phases speak fastboot, which the phone answers only in the
+# bootloader. It has to be put there before the first write and taken back out
+# afterwards -- the probe that said "droidian" was read before any of this.
+expect_contains "the phone is put in the bootloader" "$HW_LOG" 'device-goto fastboot'
+python3 - "$HW_LOG" > /tmp/p-gord.$$ <<'PYEOF'
+import sys
+lines = [l.strip() for l in open(sys.argv[1]) if l.strip()]
+def idx(prefix):
+    for i, l in enumerate(lines):
+        if l.startswith(prefix):
+            return i
+    return -1
+goto, flash = idx("device-goto fastboot"), idx("fastboot flash")
+print("goto_before_write=" + str(goto >= 0 and flash >= 0 and goto < flash))
+PYEOF
+expect_contains "before the first write, not after" /tmp/p-gord.$$ 'goto_before_write=True'
+expect_contains "and taken back out of it"          /tmp/p-art.$$ 'activate: activating'
+
+# A phone that will not enter the bootloader must stop the run there, with
+# nothing flashed, rather than firing fastboot at a device that cannot hear it.
+: > "$HW_LOG"
+FAKE_GOTO_RC=1 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
+    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    --phase boot > /tmp/p-nogoto.$$ 2>&1; rc=$?
+expect_rc "a phone that will not enter the bootloader fails the run" 1 "$rc"
+expect_absent "and nothing is flashed at it" "$HW_LOG" 'fastboot flash'
+rm -f /tmp/p-gord.$$ /tmp/p-nogoto.$$
+
 # An unreachable device is a failed verification, not a warning. Exiting 0 here
 # reported a successful provision of a phone that never came back.
 : > "$HW_LOG"
