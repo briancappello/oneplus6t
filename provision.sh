@@ -178,16 +178,22 @@ fetch_rootfs() {
     rm -f "$dest.part"
     fail_fetch() { rm -f "$dest.part"; die "$*"; }
 
-    echo "    data: fetching the rootfs from $host, compressed"
+    local bytes; bytes=$(manifest_field "$ROOTFS_IMG" bytes)
+    echo "    data: fetching the rootfs from $host, compressed (${bytes:-unknown} bytes on arrival)"
+
+    # dd reports throughput and total once a second. Without it this is several
+    # silent minutes, which from the outside is indistinguishable from a hang --
+    # and a step that cannot be told apart from a hang is one people interrupt.
     "$SSH_CMD" "$host" "zstd -c -T0 -3 $REMOTE_DIR/$ROOTFS_IMG" \
-        | zstd -dc > "$dest.part" \
+        | zstd -dc \
+        | dd bs=4M status=progress of="$dest.part" \
         || fail_fetch "the rootfs transfer from $host failed; nothing was flashed"
 
     # An exit status is a weak claim about a multi-gigabyte copy. The manifest
     # recorded what the worker built, so compare against that instead.
     want=$(manifest_field "$ROOTFS_IMG" sha256)
     [ -n "$want" ] || fail_fetch "the manifest does not record a sha256 for $ROOTFS_IMG"
-    echo "    data: verifying the rootfs against the manifest"
+    echo "    data: hashing $(( $(stat -c%s "$dest.part") / 1048576 )) MiB to check it against the manifest"
     got=$(sha256sum "$dest.part" | cut -d' ' -f1)
     [ "$got" = "$want" ] \
         || fail_fetch "the rootfs arrived corrupt: sha256 $got, expected $want"
@@ -403,6 +409,11 @@ if [ "$MODE" = artifacts ]; then
         while [ "$attempts" -lt "${VERIFY_ATTEMPTS:-30}" ]; do
             device-ssh -r 'echo ok' >/dev/null 2>&1 && break
             attempts=$((attempts + 1))
+            # Say something periodically. A phone coming back from a flash takes
+            # up to a minute, and silence for a minute reads as a hang.
+            if [ $((attempts % 10)) -eq 0 ]; then
+                echo "    verify: ${attempts} tries, still waiting for the device"
+            fi
             sleep "${VERIFY_DELAY:-2}"
         done
         [ "$attempts" -lt "${VERIFY_ATTEMPTS:-30}" ] \
