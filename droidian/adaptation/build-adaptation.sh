@@ -13,7 +13,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$(dirname "$HERE")/out-adaptation"
 IMAGE="quay.io/droidian/build-essential:current-amd64"
-PKGS="halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita"
+PKGS="halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita fajita-shutdown-trace"
 
 runtime() {
     command -v docker >/dev/null && { echo docker; return; }

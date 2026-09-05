@@ -1,0 +1,119 @@
+#!/bin/sh
+# Shutdown tracing for fajita.
+#
+#   shutdown-trace arm     at boot: keep the last shutdown's evidence
+#   shutdown-trace watch   at shutdown: fork a watcher that records what is
+#                          going on until the kernel kills it
+#
+# WHY THIS EXISTS. journald stops well before the machine does, and a normal
+# reboot on this device is a PMIC hard reset that wipes DDR, so the ramoops
+# console the kernel keeps writing is gone too. Everything after "Journal
+# stopped" -- the final SIGKILL, the unmounts, the loop detach, the kernel's
+# own device_shutdown() with its modem/ADSP handshakes -- was invisible. It
+# measured ~35s of an 80s shutdown, and 200s+ on the bad days.
+#
+# Three channels, so the record survives every stage:
+#   file   /var/log/shutdown-trace/<boot-id>.watch   fsync'd per line; lasts
+#          until the root filesystem goes read-only
+#   kmsg   interleaves with the kernel's own messages, and lands in the
+#          ramoops console zone
+#   pmsg   /dev/pmsg0, its own 2 MB ramoops zone. On this device the
+#          bootloader wipes DDR on every normal boot, warm reset or not, so
+#          the console and pmsg zones are only readable when the kernel goes
+#          down through the download-mode path and the phone halts in ramdump
+#          mode: droidian/shutdown-trace.sh --ramdump arms that
+#          (msm_poweroff.dload_on_reboot, a kernel patch in
+#          droidian/packaging/patches) and reads the zones out over Sahara.
+#
+# Volume is kept low on purpose: the console zone is 256 KB and the kernel is
+# noisy at shutdown. A snapshot is written when it changes, else every 10s.
+set -u
+
+PARAMS=/sys/module/msm_poweroff/parameters
+LOGDIR=/var/log/shutdown-trace
+# Undashed, to match journalctl _BOOT_ID.
+BOOT_ID=$(tr -d - < /proc/sys/kernel/random/boot_id)
+
+w() { [ -w "$1" ] && echo "$2" > "$1"; }
+
+arm() {
+    mkdir -p "$LOGDIR"
+    # systemd-pstore has already moved the previous boot's ramoops zones to
+    # /var/lib/systemd/pstore under fixed names; take a copy before the next
+    # shutdown overwrites them.
+    prev=$(journalctl -b -1 -o export -n1 --no-pager 2>/dev/null | sed -n 's/^_BOOT_ID=//p')
+    if [ -n "$prev" ]; then
+        # The archive names are fixed and an old one from a crash days ago
+        # stays there, so copy only what changed since the last copy. World
+        # readable: the collector fetches over sftp as the ordinary user.
+        for f in console-ramoops-0 pmsg-ramoops-0 dmesg-ramoops-0 dmesg-ramoops-1; do
+            src="/var/lib/systemd/pstore/$f"
+            [ -f "$src" ] || continue
+            cmp -s "$src" "$LOGDIR/.last.$f" && continue
+            cp "$src" "$LOGDIR/.last.$f"; cp "$src" "$LOGDIR/$prev.$f"; chmod 0644 "$LOGDIR/$prev.$f"
+        done
+        dmesg 2>/dev/null | grep -m1 -o "Power-on reason: .*" > "$LOGDIR/$prev.next-boot-pon"
+    fi
+    w /proc/sys/kernel/sysrq 1
+    echo "shutdown-trace: armed dload_knob=$([ -e "$PARAMS/dload_on_reboot" ] && echo present || echo absent) hung_task=$(cat /proc/sys/kernel/hung_task_timeout_secs 2>/dev/null || echo absent) prev=$prev"
+}
+
+# One line of status to all three channels, prefixed with the kernel clock so
+# it can be merged with the journal and the ramoops console.
+emit() {
+    line="shutdown-trace[$(cut -d' ' -f1 /proc/uptime)] $*"
+    echo "$line" >> "$LOG"
+    echo "$line" > /dev/kmsg 2>/dev/null
+    echo "$line" > /dev/pmsg0 2>/dev/null
+}
+
+snapshot() {
+    # systemd's running stop jobs. If PID 1 is wedged this is what blocks, so
+    # bound it: a timeout here is itself a finding.
+    raw=$(timeout 2 systemctl list-jobs --no-legend --plain 2>/dev/null); rc=$?
+    if [ $rc -eq 124 ]; then
+        jobs="<pid1 did not answer in 2s>"
+    else
+        jobs=$(printf '%s\n' "$raw" | awk '$3=="stop" && $4=="running" {printf "%s ", $2}')
+    fi
+    # Every task in uninterruptible sleep, with what it is sleeping in.
+    # One awk over every stat file: a fork per process took 7s on this phone.
+    # The state letter is the one after the last ')' -- comm may hold spaces.
+    ds=""
+    for pc in $(awk '{ i = match($0, /\) [A-Z] /); if (i && substr($0, i+2, 1) == "D") { c = substr($0, index($0, "(")+1, i-index($0, "(")-1); gsub(/[ \t]/, "_", c); print $1 "/" c } }' /proc/[0-9]*/stat 2>/dev/null); do
+        pid=${pc%%/*}
+        top=$(awk 'NR>1 && NR<=5 {sub(/^\[<[0-9a-f]+>\] /, ""); sub(/\+.*/, ""); printf "%s<", $0}' "/proc/$pid/stack" 2>/dev/null)
+        ds="$ds D:$pc:${top%<}"
+    done
+    echo "jobs: ${jobs:-none} |${ds:- no-D}"
+}
+
+watch() {
+    mkdir -p "$LOGDIR"
+    LOG="$LOGDIR/$BOOT_ID.watch"
+    # Undo the two mobile-power-saver settings that hide or slow exactly what
+    # we are trying to see. The adaptation's rcu-unthrottle hook does the fqs
+    # pair too; doing it here as well costs nothing and keeps this package
+    # self-contained.
+    w /proc/sys/kernel/hung_task_timeout_secs 10
+    w /sys/module/rcupdate/parameters/rcu_cpu_stall_suppress 0
+    w /sys/module/rcutree/parameters/jiffies_till_first_fqs 1
+    w /sys/module/rcutree/parameters/jiffies_till_next_fqs 1
+    emit "begin boot=$BOOT_ID dload=$(cat "$PARAMS/dload_on_reboot" 2>/dev/null || echo absent) fqs=$(cat /sys/module/rcutree/parameters/jiffies_till_first_fqs) cpu4max=$(cat /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq 2>/dev/null) bl=$(cat /sys/class/backlight/panel0-backlight/bl_power 2>/dev/null)"
+    last=""; lastt=0
+    while :; do
+        now=$(cut -d. -f1 /proc/uptime)
+        s=$(snapshot)
+        if [ "$s" != "$last" ] || [ $((now - lastt)) -ge 10 ]; then
+            emit "$s"; last=$s; lastt=$now
+        fi
+        sleep 2
+    done
+}
+
+case "${1:-}" in
+    arm)   arm ;;
+    watch) watch ;;
+    snapshot) snapshot ;;
+    *) echo "usage: $0 arm|watch|snapshot" >&2; exit 2 ;;
+esac

@@ -65,6 +65,17 @@ echo "clockfloor=$(systemctl is-active adaptation-clock-floor.service 2>/dev/nul
 # systemd resolves an ordering cycle by deleting one job silently. The victim
 # then looks identical to a unit that ran and did nothing, so check explicitly.
 echo "cycles=$(jrn | grep -c "Found ordering cycle")"
+echo "deleted=$(jrn | grep -c "deleted to break ordering cycle")"
+# lxc.service is masked: it started nothing for this container and its stop
+# killed it; masking it is what removed the cycle above. If it is back, the
+# cycle is back, and which job systemd deletes varies from boot to boot.
+echo "lxcmask=$(systemctl is-enabled lxc.service 2>/dev/null)"
+# chre must never run: shutdown critical, unstoppable, and its exit wedges in
+# fastrpc after sscrpcd is gone. Any value here means the rc override is off.
+echo "chre=$(getprop init.svc.chre 2>/dev/null)"
+# Kernel-mode fastrpc invocations are bounded (packaging/patches/0004). The
+# knob only exists on the patched kernel.
+echo "fastrpcto=$(cat /sys/module/adsprpc/parameters/kernel_invoke_timeout_ms 2>/dev/null)"
 echo "timewarp=$(jrn | grep -c "Time jumped backwards")"
 # NOT asserted: that a given node appears in our ruleset. Which nodes need our
 # help legitimately varies -- the kgsl driver creates /dev/kgsl-3d0 and /dev/ion
@@ -98,6 +109,10 @@ ck "clock-floor unit ran"         '[ "$(val clockfloor)" = active ]'
 # 1970, or the floor did not apply.
 ck "clock is not stuck in 1970"   '[ "$(val epoch)" -gt 1767225600 ]'
 ck "no systemd ordering cycles"   '[ "$(val cycles)" = 0 ]'
+ck "no jobs deleted for cycles"   '[ "$(val deleted)" = 0 ]'
+ck "lxc.service is masked"        '[ "$(val lxcmask)" = masked ]'
+ck "chre never ran"               '[ -z "$(val chre)" ]'
+ck "fastrpc kernel invoke bounded" '[ "$(val fastrpcto)" = 5000 ]'
 ck "clock never jumped backwards" '[ "$(val timewarp)" = 0 ]'
 [ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit $fail

@@ -1,0 +1,22 @@
+[Unit]
+Description=Shutdown tracing: arm warm reset, watch the teardown (fajita)
+Documentation=https://github.com/briancappello/oneplus6t
+# systemd-pstore moves last boot's ramoops out of /sys/fs/pstore; arm copies
+# them from where it put them, so it must run afterwards. It has no stop work,
+# so this ordering does not delay our ExecStop -- which must run the moment the
+# shutdown transaction is queued, hence no After= on anything that stops.
+After=systemd-pstore.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/fajita-shutdown-trace/shutdown-trace arm
+# The watcher is forked into its own session and left behind on purpose. It
+# has to outlive this unit's stop job to see the rest of the shutdown; only
+# systemd-shutdown's final broadcast SIGKILL takes it out, and by then the
+# kernel is the only thing left to observe, and it logs itself.
+ExecStop=/bin/sh -c 'setsid /usr/lib/fajita-shutdown-trace/shutdown-trace watch </dev/null >/dev/null 2>&1 &'
+KillMode=none
+
+[Install]
+WantedBy=multi-user.target

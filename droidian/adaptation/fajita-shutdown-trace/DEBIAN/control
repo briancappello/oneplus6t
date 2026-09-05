@@ -1,0 +1,11 @@
+Package: fajita-shutdown-trace
+Version: 1.0.0
+Architecture: all
+Maintainer: oneplus6t <https://github.com/briancappello/oneplus6t>
+Section: admin
+Priority: optional
+Description: Shutdown tracing for the OnePlus 6T (fajita)
+ Debugging instrumentation, not part of the adaptation. Arms a warm reset so
+ ramoops survives a normal reboot, and runs a watcher through shutdown that
+ records systemd's stop jobs and every D-state task with its kernel stack to
+ disk, kmsg and pmsg. Remove the package to get stock reboot behaviour back.

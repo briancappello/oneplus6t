@@ -84,3 +84,35 @@ if [ -f "$VENDOR_PROP" ] && [ -f "$LXC_DIR/config" ]; then
         echo "adaptation-oneplus-fajita: bound patched build.prop into the container"
     fi
 fi
+
+# Do not run chre.
+#
+# /vendor/bin/chre hosts Context Hub nanoapps for Android's ContextHubService,
+# which nothing in Droidian runs; sensors go through the sensors HAL and
+# sscrpcd, not through it. It is declared `shutdown critical`, and Android P's
+# init treats that as: never stop it on sys.powerctl, restart it if anything
+# else stops it, and START it at shutdown if it is not running -- so `disabled`
+# alone changes nothing (verified: "starting service 'chre'" 0.2s after
+# sys.powerctl). It therefore dies only when the container's pid namespace is
+# torn down, after init has already killed sscrpcd, the SLPI listener its own
+# DSP-side exit needs. Its close() then sits in fastrpc_file_free until the
+# driver's kernel-invoke timeout; before that timeout existed, forever, which
+# is what kept the container's init, lxc-start and /dev/loop1 alive through
+# the whole systemd shutdown. Replace `shutdown critical` with `disabled` and
+# it never runs. Same technique as build.prop: a patched copy, bound read-only
+# over the container's view of the file.
+QCOM_RC="$LXC_DIR/rootfs/vendor/etc/init/hw/init.qcom.rc"
+RC_OVERRIDE="$LXC_DIR/init.qcom.rc"
+RC_ENTRY="lxc.mount.entry = $RC_OVERRIDE vendor/etc/init/hw/init.qcom.rc none bind,ro 0 0"
+
+if [ -f "$QCOM_RC" ] && [ -f "$LXC_DIR/config" ] && grep -q '^service chre ' "$QCOM_RC"; then
+    if [ ! -f "$RC_OVERRIDE" ] || [ "$QCOM_RC" -nt "$RC_OVERRIDE" ] || grep -q '^    shutdown critical$' <(sed -n '/^service chre /,/^$/p' "$RC_OVERRIDE"); then
+        # Within the chre block only.
+        sed '/^service chre /,/^$/ s/^    shutdown critical$/    disabled/' "$QCOM_RC" > "$RC_OVERRIDE"
+        echo "adaptation-oneplus-fajita: wrote $RC_OVERRIDE (chre disabled)"
+    fi
+    if ! grep -qF "init.qcom.rc" "$LXC_DIR/config"; then
+        printf '%s\n' "$RC_ENTRY" >> "$LXC_DIR/config"
+        echo "adaptation-oneplus-fajita: bound patched init.qcom.rc into the container"
+    fi
+fi
