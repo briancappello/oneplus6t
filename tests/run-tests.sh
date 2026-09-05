@@ -374,8 +374,20 @@ expect_rc "--phase boot exits 0" 0 "$rc"
 expect_contains "only boot phase runs" /tmp/p-phase.$$ 'boot:'
 expect_absent "edl phase is skipped" /tmp/p-phase.$$ 'edl:'
 expect_absent "data phase is skipped" /tmp/p-phase.$$ 'data:'
-rm -rf /tmp/artifacts-test /tmp/pr-phase.$$ /tmp/p-phase.$$
+rm -rf /tmp/artifacts-test /tmp/p-phase.$$
 
+# The header documents PHASE as an environment variable, so it has to be one.
+# It was initialised to "" unconditionally, which quietly ate the documented
+# form and ran every phase instead of the one asked for.
+mkdir -p /tmp/artifacts-test/droidian/out/images
+touch /tmp/artifacts-test/droidian/out/images/boot.img
+touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
+PHASE=boot timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test \
+    --probe-file /tmp/pr-phase.$$ > /tmp/p-envphase.$$ 2>&1; rc=$?
+expect_rc "PHASE from the environment exits 0" 0 "$rc"
+expect_contains "PHASE from the environment selects the phase" /tmp/p-envphase.$$ 'boot:'
+expect_absent  "and runs no other"                             /tmp/p-envphase.$$ 'data:'
+rm -rf /tmp/artifacts-test /tmp/pr-phase.$$ /tmp/p-envphase.$$
 
 # Destructive work must be explained and confirmed. has_linuxroot=no is the one
 # state that authorises a repartition, so it is the state to test refusal in.
@@ -467,8 +479,37 @@ PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
     timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp.$$ > /tmp/rb2.$$ 2>&1
 expect_rc "a failing worker fails the run" 1 "$?"
 expect_contains "and says which host"      /tmp/rb2.$$ 'taichi'
-rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/rb.$$ /tmp/rb2.$$
+rm -f /tmp/rb.$$ /tmp/rb2.$$
 
+# Full mode: the default path, with no flag naming what to do. It probes, builds
+# on the worker when BUILD_HOST is set, then runs the phases.
+cat > /tmp/fake-ssh.$$ <<FS
+#!/usr/bin/env bash
+echo "SSH \$*" >> $rlog
+exit 0
+FS
+chmod +x /tmp/fake-ssh.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\n' > /tmp/pr-fm.$$
+: > "$rlog"; : > "$HW_LOG"
+BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
+    timeout 60 "$PROV" --probe-file /tmp/pr-fm.$$ --phase verify \
+    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/fm.$$ 2>&1; rc=$?
+expect_rc "full mode needs no flag to say what to do" 0 "$rc"
+expect_contains "BUILD_HOST builds on the worker first" "$rlog" 'build.sh --plan'
+expect_contains "and then runs the phases"              /tmp/fm.$$ 'verify:'
+
+# A manifest is the unit of trust every phase decides from. Without one there is
+# nothing to compare the device against, so this must stop before any phase
+# rather than flash whatever happens to be lying around.
+: > "$HW_LOG"
+MANIFEST=/tmp/does-not-exist.json timeout 30 "$PROV" --probe-file /tmp/pr-fm.$$ \
+    < /dev/null > /tmp/nm.$$ 2>&1; rc=$?
+expect_rc "a missing manifest stops the run" 1 "$rc"
+expect_contains "and says why"               /tmp/nm.$$ 'no manifest'
+expect_contains "and names the file it wanted" /tmp/nm.$$ '/tmp/does-not-exist.json'
+expect_absent  "and flashes nothing"         "$HW_LOG" 'fastboot flash'
+rm -f "$rlog" /tmp/fake-ssh.$$ /tmp/fake-scp.$$ /tmp/rp.$$ /tmp/pr-fm.$$ /tmp/fm.$$ /tmp/nm.$$
 
 echo
 echo ">>> lib/probe.sh tests"

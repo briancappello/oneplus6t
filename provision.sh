@@ -2,16 +2,18 @@
 #
 # Probe the phone, decide what is needed, flash it, verify it.
 #
+#   ./provision.sh                           # probe, flash what is needed, verify
+#   BUILD_HOST=taichi ./provision.sh         # build on a worker first, then that
 #   ./provision.sh --plan-only > plan.json   # probe and decide; touch nothing
-#   ./provision.sh --artifacts ./out         # flash using prebuilt artifacts
-#   ./provision.sh --remote-build taichi     # build on a worker, fetch the results
+#   ./provision.sh --artifacts ./out         # flash from somewhere else on disk
+#   ./provision.sh --remote-build taichi     # build on a worker and stop there
 #   PHASE=boot ./provision.sh                # run a single phase
-#   VERIFY=1 ./provision.sh                  # full sha256 instead of cheap probes
 #
-# This never builds. It probes for real evidence and skips only what the device
-# demonstrably already has. No state file is written or trusted: such a record
-# lies the moment anything changes outside the pipeline, and this repo has been
-# bricked once already by believing a claim over reality.
+# It builds nothing itself: with BUILD_HOST it asks a worker, and otherwise it
+# flashes what build.sh already produced. It probes for real evidence and skips
+# only what the device demonstrably already has. No state file is written or
+# trusted: such a record lies the moment anything changes outside the pipeline,
+# and this repo has been bricked once already by believing a claim over reality.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,7 +77,7 @@ PY
 }
 
 ARTIFACTS=""
-PHASE=""
+PHASE="${PHASE:-}"
 ASSUME_YES="${ASSUME_YES:-}"
 
 SSH_CMD="${PROV_SSH:-ssh}"
@@ -169,7 +171,9 @@ while [ $# -gt 0 ]; do
         --phase)      shift; PHASE="${1:?--phase needs a name}"; shift ;;
         --remote-build) shift; REMOTE_HOST="${1:?--remote-build needs a host}"; MODE=remote; shift ;;
         --plan-file)  shift; PLAN_FILE="${1:?--plan-file needs a path}"; shift ;;
-        -h|--help)    sed -n '2,16p' "$0"; exit 0 ;;
+        # The header, however long it happens to be. A hardcoded line range goes
+        # stale the first time someone documents a flag.
+        -h|--help)    awk 'NR>1 && /^#/ {print; next} NR>1 {exit}' "$0"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done
@@ -177,8 +181,9 @@ done
 # Probing reads the phone. A remote build handed an explicit plan has nothing
 # left to ask it, so requiring an attached device there would make the one mode
 # that never touches hardware the one that insists on it.
+OWN_PROBE=""
 if [ -z "$PROBE_FILE" ] && ! { [ "$MODE" = remote ] && [ -n "${PLAN_FILE:-}" ]; }; then
-    PROBE_FILE=$(mktemp); trap 'rm -f "$PROBE_FILE"' EXIT
+    PROBE_FILE=$(mktemp); OWN_PROBE=1; trap 'rm -f "$PROBE_FILE"' EXIT
     "$HERE/lib/probe.sh" probe_all > "$PROBE_FILE" || die "probe failed"
 fi
 
@@ -195,6 +200,32 @@ fi
 if [ "$MODE" = plan ]; then
     emit_plan "$(decide_build "$PROBE_FILE" "$MANIFEST")"
     exit 0
+fi
+
+# Full mode: the default, with no flag saying what to do. Build on the worker if
+# one was named, then flash from whatever is on disk. Everything after this point
+# is the artifacts path, because that is what full mode is once the artifacts
+# exist -- there is no second flashing implementation to keep in step.
+if [ "$MODE" = full ]; then
+    if [ -n "${BUILD_HOST:-}" ]; then
+        PLAN_FILE="${PLAN_FILE:-$(mktemp)}"
+        emit_plan "$(decide_build "$PROBE_FILE" "$MANIFEST")" > "$PLAN_FILE"
+        remote_build "$BUILD_HOST" "$PLAN_FILE"
+        # The phone may have moved while the worker was building, so decide from
+        # fresh evidence -- unless the caller pinned the evidence with
+        # --probe-file, in which case re-probing would overrule what they asked.
+        if [ -n "$OWN_PROBE" ]; then
+            "$HERE/lib/probe.sh" probe_all > "$PROBE_FILE" || die "re-probe failed"
+        fi
+    fi
+    # Every phase decides by comparing the device against the manifest. Without
+    # one there is nothing to compare, and flashing whatever happens to be lying
+    # on disk is exactly the unrecorded install this pipeline exists to prevent.
+    [ -f "$MANIFEST" ] || die "no manifest at $MANIFEST -- run build.sh, or set BUILD_HOST"
+    # build.sh writes here and remote_build fetches here, so this is where the
+    # artifacts are.
+    ARTIFACTS="$HERE"
+    MODE=artifacts
 fi
 
 if [ "$MODE" = artifacts ]; then
@@ -310,4 +341,5 @@ if [ "$MODE" = artifacts ]; then
     exit 0
 fi
 
-die "no mode specified; use --plan-only or --artifacts"
+# Every mode above either exits or resolves to the artifacts path, so there is
+# nothing left to fall through to.
