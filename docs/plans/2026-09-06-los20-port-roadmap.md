@@ -506,7 +506,7 @@ and the container (`lxc@android`) starts against the LineageOS 20 `vendor`.
   without SELinux enforcement regardless; confirm the cmdline carries what
   the halium initramfs expects.
 
-**Detailed plan:** `docs/plans/<date>-los20-userland.md`.
+**Detailed plan:** `docs/plans/2026-09-06-los20-userland.md` (written; Phase 4 not started).
 
 ---
 ## Phase 5: Peripheral bring-up
