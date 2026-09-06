@@ -117,6 +117,11 @@ $(runtime) run --rm \
     "$IMAGE" \
     /bin/sh -c 'cd /buildd/sources && releng-build-package' 2>&1 | tee "$LOG"
 
+# Publish the .config the build actually used, so kernel-config-check.sh can
+# assert the Halium delta held rather than trusting that olddefconfig kept
+# every line. `|| true`: a missing copy must not fail a build that succeeded.
+cp "$KERNEL_DIR/.config" "$OUT_DIR/config-$KVER-oneplus-fajita" 2>/dev/null || true
+
 echo ">>> extracting images"
 IMAGES="$OUT_DIR/images"
 rm -rf "$IMAGES" && mkdir -p "$IMAGES"
