@@ -43,9 +43,12 @@ CONFIG_EXT4_FS_POSIX_ACL=y
 CONFIG_KEYS=y
 CONFIG_ENCRYPTED_KEYS=y
 
-# ---- security: Droidian boots with security=apparmor apparmor=1 ----------
-# SELinux stays compiled in (the vendor's init expects the LSM to exist) but
-# must not be the default and must be switchable off from the cmdline.
+# ---- security: AppArmor is the compiled-in default LSM -------------------
+# It MUST be the default here rather than selected on the cmdline: with the
+# LineageOS 20 dtbo on the slot, a cmdline carrying the apparmor selection
+# tokens never reaches the kernel (see kernel-info.mk). SELinux stays
+# compiled in (the vendor's init expects the LSM to exist) but is not the
+# default and is switchable off from the cmdline.
 CONFIG_SECURITY_APPARMOR=y
 CONFIG_SECURITY_APPARMOR_HASH=y
 CONFIG_SECURITY_APPARMOR_BOOTPARAM_VALUE=1
