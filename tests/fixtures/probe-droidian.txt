@@ -6,6 +6,8 @@ ii  halium-hostdev-perms      1.0.0                                  all        
 ii  halium-oldkernel-compat   1.0.0                                  all          Make polkit authenticate on kernels without pidfd
 --- slot
 a
+--- datapart
+userdata
 --- partlabels
 boot_a
 boot_b

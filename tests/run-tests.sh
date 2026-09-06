@@ -672,6 +672,15 @@ expect_contains "package versions parsed"  /tmp/p-dro.$$ 'pkg_halium-hostdev-per
 expect_contains "probe is complete"        /tmp/p-dro.$$ 'probe_complete=yes'
 expect_contains "the running slot is read"  /tmp/p-dro.$$ 'slot=a'
 expect_contains "linuxroot is detected"     /tmp/p-dro.$$ 'has_linuxroot=yes'
+expect_contains "the data partition is named" /tmp/p-dro.$$ 'data_part=userdata'
+
+# A probe whose datapart section is missing must say unknown, not guess.
+sed '/^--- datapart$/,/^--- partlabels$/{/^--- partlabels$/!d}' \
+    "$ROOT/tests/fixtures/probe-droidian.txt" > /tmp/f-nodp.$$
+PROBE_STATE=droidian PROBE_SSH_FIXTURE=/tmp/f-nodp.$$ \
+    bash "$PROBE" probe_all > /tmp/p-nodp.$$ 2>&1
+expect_contains "an unreadable data partition is unknown" /tmp/p-nodp.$$ 'data_part=unknown'
+rm -f /tmp/f-nodp.$$ /tmp/p-nodp.$$
 
 # A device that listed its partitions without linuxroot is the only state that
 # may authorise a repartition, so it must be told apart from a failed listing.
