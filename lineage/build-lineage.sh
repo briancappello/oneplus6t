@@ -242,10 +242,26 @@ phase_sync() {
     # not take a value"). LFS itself is very much needed -- the chromium-webview
     # prebuilts are LFS objects -- but it is enabled by having the git-lfs binary
     # in the image, which the Containerfile installs, not by this flag.
+    #
+    # --groups=default,-cts excludes the CTS suite. LineageOS's manifest ships
+    # `cts` (LineageOS/android_cts) but NOT tools/tradefederation/core or
+    # test/suite_harness, so cts-tradefed and cts-shim-host-lib are defined
+    # nowhere in the tree. soong parses Android.bp by walking the filesystem,
+    # not the manifest, so merely leaving those projects unsynced is not enough
+    # -- the cts directory must not exist at all, or bootstrap dies with:
+    #   "CtsApexTestCases" depends on undefined module "cts-tradefed"
+    #
+    # The usual workaround is ALLOW_MISSING_DEPENDENCIES=true, deliberately NOT
+    # used here: it downgrades EVERY missing dependency to a warning and
+    # silently disables the module. On a device port that is precisely the
+    # signal we need to stay loud -- a missing vendor blob or HAL must fail the
+    # build, not quietly vanish from the image. Excluding one unbuildable test
+    # suite keeps strict dependency checking for everything that matters.
     in_container "repo init \
         -u '$MANIFEST_URL' \
         -b '$MANIFEST_REV' \
         --repo-rev='$REPO_REV' \
+        --groups='default,-cts' \
         --no-clone-bundle"
 
     # The local manifest must be in place BEFORE the sync, or the device,
