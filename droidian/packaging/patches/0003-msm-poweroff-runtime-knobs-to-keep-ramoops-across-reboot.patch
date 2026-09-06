@@ -1,8 +1,23 @@
+From 992b921b93e507414895d41a6e4bbc39d5b5974e Mon Sep 17 00:00:00 2001
+From: oneplus6t port <none@localhost>
+Date: Sun, 6 Sep 2026 13:14:46 -0600
+Subject: [PATCH] power: reset: msm-poweroff: runtime knobs to keep ramoops across reboot
+
+
+Re-ported onto LineageOS 4.9.337 (7fbf93e22944): hunks shift by a line or
+two. 4.9.337 also has its own `force_warm_reboot`, but that one is a
+device-tree property read once at probe; this patch's `force_warm_reset`
+is a module parameter the shutdown-trace tooling flips at runtime through
+/sys/module/msm_poweroff/parameters/. Both feed the same PMIC decision.
+---
+ drivers/power/reset/msm-poweroff.c | 26 +++++++++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
 diff --git a/drivers/power/reset/msm-poweroff.c b/drivers/power/reset/msm-poweroff.c
-index 65fd6069e..a10b39ac1 100644
+index 28792c292f8e..aabec902aead 100644
 --- a/drivers/power/reset/msm-poweroff.c
 +++ b/drivers/power/reset/msm-poweroff.c
-@@ -105,6 +105,26 @@ struct reset_attribute {
+@@ -106,6 +106,26 @@ struct reset_attribute {
  module_param_call(download_mode, dload_set, param_get_int,
  			&download_mode, 0644);
  
@@ -29,7 +44,7 @@ index 65fd6069e..a10b39ac1 100644
  static int panic_prep_restart(struct notifier_block *this,
  			      unsigned long event, void *ptr)
  {
-@@ -290,7 +310,8 @@ static void msm_restart_prepare(const char *cmd)
+@@ -289,7 +309,8 @@ static void msm_restart_prepare(const char *cmd)
  	 */
  
  	set_dload_mode(download_mode &&
@@ -39,13 +54,16 @@ index 65fd6069e..a10b39ac1 100644
  #endif
  
  	if (qpnp_pon_check_hard_reset_stored()) {
-@@ -304,6 +325,9 @@ static void msm_restart_prepare(const char *cmd)
- 				(cmd != NULL && cmd[0] != '\0'));
- 	}
+@@ -306,6 +327,9 @@ static void msm_restart_prepare(const char *cmd)
+ 	if (force_warm_reboot)
+ 		pr_info("Forcing a warm reset of the system\n");
  
 +	if (force_warm_reset)
 +		need_warm_reset = true;
 +
  	/* Hard reset the PMIC unless memory contents must be maintained. */
- 	if (need_warm_reset)
+ 	if (force_warm_reboot || need_warm_reset)
  		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+-- 
+2.55.0
+
