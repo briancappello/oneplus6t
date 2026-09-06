@@ -395,7 +395,7 @@ rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
 # Flash phases: data phase flashes linuxroot
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-flash-data.$$
 mkdir -p /tmp/artifacts-test/droidian
-touch /tmp/artifacts-test/droidian/linuxroot.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
 expect_rc "data phase exits 0" 0 "$rc"
 expect_contains "data phase flashes linuxroot" /tmp/p-flash-data.$$ 'data: installing rootfs'
@@ -405,7 +405,7 @@ rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
 # still on userdata: the whole point of the data phase is to move it.
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=userdata\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-move.$$
 mkdir -p /tmp/artifacts-test/droidian
-touch /tmp/artifacts-test/droidian/linuxroot.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-move.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-move.$$ 2>&1; rc=$?
 expect_contains "data runs when the install is still on userdata" /tmp/p-move.$$ 'data: installing rootfs'
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-stay.$$
@@ -427,10 +427,10 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/linuxroot.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 : > "$HW_LOG"
 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
-timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
+timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/p-art.$$ 2>&1; rc=$?
 expect_rc "--artifacts mode exits 0" 0 "$rc"
 # rc=124 would mean a phase blocked waiting for a device. Bounded so that a
 # regression fails the suite instead of hanging it.
@@ -470,7 +470,7 @@ expect_contains "leaving the bootloader is waited for" "$HW_LOG" 'device-goto dr
 # nothing flashed, rather than firing fastboot at a device that cannot hear it.
 : > "$HW_LOG"
 FAKE_GOTO_RC=1 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
-    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     --phase boot > /tmp/p-nogoto.$$ 2>&1; rc=$?
 expect_rc "a phone that will not enter the bootloader fails the run" 1 "$rc"
 expect_absent "and nothing is flashed at it" "$HW_LOG" 'fastboot flash'
@@ -481,7 +481,7 @@ expect_absent "and nothing is flashed at it" "$HW_LOG" 'fastboot flash'
 : > "$HW_LOG"
 FAKE_FASTBOOT_HANG=reboot FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
     ACTIVATE_TIMEOUT=2 VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
-    timeout 60 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    timeout 60 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     > /tmp/p-hang.$$ 2>&1; rc=$?
 expect_rc "an unanswered reboot does not hang the run" 0 "$rc"
 expect_contains "it says fastboot went quiet" /tmp/p-hang.$$ 'did not confirm the reboot'
@@ -500,7 +500,7 @@ expect_contains "and says nothing was verified" /tmp/p-unreach.$$ 'nothing was v
 # Reachable but wrong must fail too. This is the case that used to answer an
 # echo and call the install successful.
 FAKE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
-    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     --phase verify > /tmp/p-bad.$$ 2>&1; rc=$?
 expect_rc "a reachable but incorrect install fails verify" 1 "$rc"
 expect_contains "and reports the failing checks" /tmp/p-bad.$$ 'FAILURES'
@@ -538,7 +538,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=n
 mkdir -p /tmp/artifacts-test/droidian/out/images /tmp/artifacts-test/msm
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/linuxroot.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 touch /tmp/artifacts-test/msm/gpt_main0.bin
 
 : > "$HW_LOG"
@@ -556,7 +556,7 @@ expect_absent "a refused run flashes nothing"      "$HW_LOG" 'fastboot flash'
 # consent, not about how long a real phone takes to come back.
 VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
 timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-des.$$ \
-    --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
+    --manifest "$ROOT/tests/fixtures/manifest.json" --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
 expect_rc "--yes proceeds without a terminal" 0 "$rc"
 expect_contains "the confirmed run repartitions" "$HW_LOG" 'repartition-dualboot'
 
@@ -644,6 +644,41 @@ rm -f /tmp/rb3.$$
 # only for work deliberately kept unpushed.
 expect_contains "a published commit fetches from origin" "$rlog" 'git fetch -q origin'
 expect_absent  "a published commit sends no bundle"      "$rlog" 'op6t.bundle'
+
+# A rootfs already on disk is reused only when it is the one the manifest
+# describes. A stale one from an earlier build was flashed once while the
+# worker had already replaced it -- the phone got the old image and nothing
+# said so.
+cat > /tmp/fake-ssh.$$ <<FS
+#!/usr/bin/env bash
+echo "SSH \$*" >> $rlog
+case "\$*" in *zstd*) printf 'sparse rootfs fixture\n' | zstd -c ;; esac
+exit 0
+FS
+chmod +x /tmp/fake-ssh.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=userdata\n' > /tmp/pr-stale.$$
+mkdir -p "$fetchroot/droidian"
+printf 'stale rootfs from an earlier run\n' > "$fetchroot/droidian/linuxroot.simg"
+: > "$rlog"; : > "$HW_LOG"
+BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ \
+    timeout 30 "$PROV" --yes --artifacts "$fetchroot" --probe-file /tmp/pr-stale.$$ \
+    --manifest "$rman" --phase data > /tmp/rb4.$$ 2>&1; rc=$?
+expect_rc "a stale local rootfs does not fail the run" 0 "$rc"
+expect_contains "a stale local rootfs is fetched again"  "$rlog" 'zstd -c'
+expect_contains "and the fresh one is flashed"           "$HW_LOG" 'fastboot flash linuxroot'
+: > "$rlog"
+BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ \
+    timeout 30 "$PROV" --yes --artifacts "$fetchroot" --probe-file /tmp/pr-stale.$$ \
+    --manifest "$rman" --phase data > /dev/null 2>&1
+expect_absent  "a current local rootfs is not fetched again" "$rlog" 'zstd -c'
+# Without a worker to ask, a mismatch is a refusal, not a flash.
+printf 'stale rootfs from an earlier run\n' > "$fetchroot/droidian/linuxroot.simg"
+: > "$HW_LOG"
+timeout 30 "$PROV" --yes --artifacts "$fetchroot" --probe-file /tmp/pr-stale.$$ \
+    --manifest "$rman" --phase data > /tmp/rb5.$$ 2>&1; rc=$?
+expect_rc "a stale rootfs with no worker fails the run" 1 "$rc"
+expect_absent "and flashes nothing"                      "$HW_LOG" 'fastboot flash'
+rm -f /tmp/pr-stale.$$ /tmp/rb4.$$ /tmp/rb5.$$
 
 : > "$rlog"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=0 \

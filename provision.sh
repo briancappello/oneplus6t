@@ -217,6 +217,16 @@ fetch_rootfs() {
     mv "$dest.part" "$dest" || fail_fetch "could not finish the rootfs transfer"
 }
 
+# rootfs_current <file> — the file exists and its sha256 is the one the
+# manifest records for the rootfs.
+rootfs_current() {
+    local f=$1 want
+    [ -f "$f" ] || return 1
+    want=$(manifest_field "$ROOTFS_IMG" sha256)
+    [ -n "$want" ] || return 1
+    [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$want" ]
+}
+
 # confirm_destructive <line...> — name every irreversible step, then require an
 # explicit yes.
 #
@@ -404,9 +414,15 @@ if [ "$MODE" = artifacts ]; then
         echo "    data: installing rootfs"
         rootfs_img="$ARTIFACTS/$ROOTFS_IMG"
         # Only fetched once it is known to be needed, so a run that skips this
-        # phase does not move gigabytes to decide it had nothing to do.
-        [ -f "$rootfs_img" ] || [ -z "${BUILD_HOST:-}" ] || fetch_rootfs "$BUILD_HOST"
-        [ -f "$rootfs_img" ] || die "rootfs image not found: $rootfs_img"
+        # phase does not move gigabytes to decide it had nothing to do. And
+        # only reused when it is the image the manifest describes: a stale one
+        # from an earlier build was flashed once after the worker had already
+        # replaced it, and nothing on the phone could tell the difference.
+        if ! rootfs_current "$rootfs_img"; then
+            [ -n "${BUILD_HOST:-}" ] \
+                || die "$rootfs_img is missing or is not the image the manifest describes; run build.sh, or set BUILD_HOST"
+            fetch_rootfs "$BUILD_HOST"
+        fi
         # linuxroot, never userdata: userdata is Android's /data, and the
         # kernel cmdline (datapart=) points the halium initramfs here.
         echo "    data: flashing linuxroot (~$(( $(stat -c%s "$rootfs_img") / 1000000 )) MB sparse)"
