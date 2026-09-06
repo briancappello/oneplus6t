@@ -1,0 +1,87 @@
+# Toolchain image for building LineageOS 20 (Android 13) for the OnePlus 6T.
+#
+# Built by lineage/build-lineage.sh. This image holds ONLY the toolchain; the
+# ~200 GB source tree and out/ live on the host and are bind-mounted in, so a
+# rebuilt image never costs a re-sync and the tree survives `podman rmi`.
+#
+# WHY debian:bookworm, pinned by digest:
+#
+#   * bookworm still ships libncurses5, libtinfo5 and openjdk-17. trixie
+#     dropped ALL THREE, which is what actually breaks an AOSP 13 build -- not
+#     the distro's age. Verified by package resolution, not assumed.
+#   * glibc 2.36. AOSP 13 ships hermetic prebuilt host binaries (clang, soong,
+#     its own jdk) linked against an OLDER glibc, and glibc is backward
+#     compatible. So the risk direction is running those prebuilts on a base
+#     that is too OLD, never too new. bullseye's 2.31 would take that risk for
+#     no benefit; bookworm does not.
+#   * Debian 12 is in support until 2028, so its apt repos stay reachable. A
+#     base whose repos have gone EOL is a build that stops reproducing.
+#
+# The digest, not the tag, is the pin. `debian:bookworm` moves on every point
+# release; this line does not.
+FROM docker.io/library/debian@sha256:2f65600e1252c5649d2213e1d1ea4d74253d26514dc6530102a875e429245929
+
+# AOSP 13 host dependencies. Two names differ from every Ubuntu-based guide you
+# will find, and both fail at `apt-get install`, not at build time:
+#   git-core        -> git              (git-core is a bullseye/Ubuntu-ism)
+#   lib32ncurses5-dev -> lib32ncurses-dev
+# libncurses5/libtinfo5 are for AOSP's prebuilt host binaries, which still link
+# the ncurses 5 ABI.
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        bc \
+        bison \
+        build-essential \
+        ca-certificates \
+        ccache \
+        cpio \
+        curl \
+        fontconfig \
+        flex \
+        git \
+        gnupg \
+        kmod \
+        lib32ncurses-dev \
+        lib32z1-dev \
+        libc6-dev-i386 \
+        libgl1-mesa-dev \
+        libncurses5 \
+        libssl-dev \
+        libtinfo5 \
+        libx11-dev \
+        libxml2-utils \
+        openjdk-17-jdk-headless \
+        procps \
+        python-is-python3 \
+        python3 \
+        rsync \
+        unzip \
+        x11proto-core-dev \
+        xsltproc \
+        zip \
+        zlib1g-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+# The `repo` launcher, pinned by tag AND verified by hash. The launcher is only
+# the bootstrap: it downloads the real git-repo into .repo/repo at init time,
+# which build-lineage.sh pins separately with `repo init --repo-rev`.
+#
+# Deliberately NOT storage.googleapis.com/git-repo-downloads/repo -- that URL
+# serves a moving target, so hashing it would break on their schedule.
+ARG REPO_VERSION=v2.45
+ARG REPO_SHA256=b03b473e2f5342acd914693a3a9d70560de6d6cd5fad2bdb8dcbb5ae170d78c9
+RUN set -eux; \
+    curl -fsSL -o /usr/local/bin/repo \
+        "https://raw.githubusercontent.com/GerritCodeReview/git-repo/${REPO_VERSION}/repo"; \
+    echo "${REPO_SHA256}  /usr/local/bin/repo" | sha256sum -c -; \
+    chmod 0755 /usr/local/bin/repo
+
+# No USER and no baked-in account on purpose. build-lineage.sh runs this image
+# with `--user $(id -u):$(id -g)` (plus `--userns=keep-id` under rootless
+# podman) so that everything written into the bind-mounted tree is owned by the
+# invoking host user on any machine. A UID baked in here would be wrong on the
+# next one. HOME is likewise supplied at runtime, pointing inside the mount,
+# because repo and git both need a writable home.
+WORKDIR /aosp
