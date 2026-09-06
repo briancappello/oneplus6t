@@ -88,7 +88,12 @@ echo ">>> applying fajita packaging overlay"
 # not exist" into a silent no-op, and the build then died an hour later in
 # releng-build-changelog with "Unable to find debian/control".
 mkdir -p "$KERNEL_DIR/debian/source"
-cp -v "$HERE/packaging/debian/"* "$KERNEL_DIR/debian/" | sed 's/^/    /'
+# Files only: the glob also matches the source/ directory, which cp without
+# -r rejects with exit 1, and under pipefail that exit escapes the `| sed`
+# and set -e kills the script right here, before "applying patches". The
+# source/ subdirectory has exactly one file and is copied on its own below.
+find "$HERE/packaging/debian" -maxdepth 1 -type f -print0 \
+    | xargs -0 -I{} cp -v {} "$KERNEL_DIR/debian/" | sed 's/^/    /'
 cp "$HERE/packaging/debian/source/format" "$KERNEL_DIR/debian/source/format"
 [ -f "$KERNEL_DIR/debian/control" ] \
     || { echo "packaging overlay did not land: no debian/control in $KERNEL_DIR" >&2; exit 1; }
