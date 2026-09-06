@@ -1,0 +1,21 @@
+// Developer mode for the OnePlus 6T LineageOS 20 build. Only reachable when
+// vendor/extra/product.mk adds `developer-mode` to PRODUCT_PACKAGES, which
+// build-lineage.sh does for --developer-mode and nothing else does.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+sh_binary {
+    name: "developer-mode-seed",
+    src: "developer-mode-seed.sh",
+    system_ext_specific: true,
+    init_rc: ["developer-mode.rc"],
+}
+
+// A phony that pulls the script (and, through init_rc, the .rc) in by one
+// name from product.mk.
+phony {
+    name: "developer-mode",
+    required: ["developer-mode-seed"],
+}

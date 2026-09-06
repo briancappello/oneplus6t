@@ -9,6 +9,11 @@
 #   ./lineage/build-lineage.sh build     # brunch fajita (hours), then extract
 #   ./lineage/build-lineage.sh extract   # publish the 5 images to $LINEAGE_WORK/images
 #   ./lineage/build-lineage.sh all       # image, doctor, sync, then build
+#   ./lineage/build-lineage.sh all --developer-mode
+#                                        # same, with Developer options, USB
+#                                        # debugging, rooted debugging and
+#                                        # promptless adb baked in. Omitted
+#                                        # means a stock image.
 #
 # You are meant to hand-edit the tree in $LINEAGE_WORK as your normal user
 # between phases; the container bind-mounts it and sees changes immediately,
@@ -396,9 +401,14 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
     # directory this script owns and LineageOS reads through its
     # inherit-product-if-exists hook. Copied fresh every sync so the tree
     # always reflects this checkout, never a previous run.
+    # Replaced wholesale, not merged: a developer-mode build followed by a
+    # stock one must not leave developer-mode/ behind in the tree. product.mk
+    # would ignore it without the make variable, but "ignored" and "absent"
+    # are different things to audit.
+    rm -rf "$WORK/vendor/extra"
     mkdir -p "$WORK/vendor/extra"
-    cp -f "$HERE/vendor-extra/product.mk" "$WORK/vendor/extra/product.mk"
-    echo ">>> installed vendor/extra/product.mk"
+    cp -a "$HERE/vendor-extra/." "$WORK/vendor/extra/"
+    echo ">>> installed vendor/extra/ ($(find "$WORK/vendor/extra" -type f | wc -l) files)"
 
     echo ">>> sync complete"
     in_container 'for d in device/oneplus/fajita device/oneplus/sdm845-common \
@@ -433,7 +443,14 @@ phase_build() {
     # not ship. It does NOT silently excuse a missing vendor blob or HAL: those
     # fail on their own in packaging and in the vintf checks Phase 2 runs
     # against the built image. Verify the image, not the absence of this flag.
-    in_container "export ALLOW_MISSING_DEPENDENCIES=true &&
+    #
+    # LINEAGE_DEVELOPER_MODE is the single switch product.mk reads. It is set
+    # to "true" only when --developer-mode was given, and is otherwise
+    # exported EMPTY rather than left unset, so a value leaking in from the
+    # caller's environment cannot turn developer mode on by accident.
+    local devmode="${DEVELOPER_MODE:+true}"
+    [ -n "$devmode" ] && echo ">>> developer mode: Developer options, USB debugging, rooted debugging, ro.adb.secure=0"
+    in_container "export ALLOW_MISSING_DEPENDENCIES=true LINEAGE_DEVELOPER_MODE='$devmode' &&
         ccache -M ${CCACHE_GB}G >/dev/null &&
         source build/envsetup.sh &&
         lunch $LUNCH_TARGET &&
@@ -481,12 +498,27 @@ phase_extract() {
     echo ">>> images ready in $dst"
 }
 
-case "${1:-all}" in
-    image)  phase_image ;;
-    doctor) phase_doctor ;;
+# --developer-mode may appear anywhere. Omitted == stock image. It is a
+# build-time decision baked into system.img, so it is honoured by `build`
+# and `all`; passing it to sync/image/extract is accepted and ignored so a
+# habitual command line does not have to change per phase.
+DEVELOPER_MODE=""
+PHASE=""
+for arg in "$@"; do
+    case "$arg" in
+        --developer-mode) DEVELOPER_MODE=1 ;;
+        --*) echo "build-lineage.sh: unknown option $arg" >&2; exit 64 ;;
+        *) [ -z "$PHASE" ] || { echo "build-lineage.sh: one phase only, got '$PHASE' and '$arg'" >&2; exit 64; }
+           PHASE="$arg" ;;
+    esac
+done
+
+case "${PHASE:-all}" in
+    image)   phase_image ;;
+    doctor)  phase_doctor ;;
     sync)    guard_single_instance; phase_sync ;;
     build)   guard_single_instance; phase_build ;;
     extract) phase_extract ;;
-    all)    guard_single_instance; phase_image; phase_doctor; phase_sync; phase_build ;;
-    *) echo "usage: build-lineage.sh [image|doctor|sync|build|extract|all]" >&2; exit 1 ;;
+    all)     guard_single_instance; phase_image; phase_doctor; phase_sync; phase_build ;;
+    *) echo "usage: build-lineage.sh [image|doctor|sync|build|extract|all] [--developer-mode]" >&2; exit 1 ;;
 esac

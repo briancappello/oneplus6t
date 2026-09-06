@@ -1,0 +1,39 @@
+# Developer mode, baked into the image by `build-lineage.sh --developer-mode`.
+# Not present in a stock build.
+#
+# Seeds, on every boot, the state that Settings -> Developer options would
+# otherwise have to be clicked into by hand: developer options visible, USB
+# debugging on, rooted debugging on. All three live in /data, so a
+# `fastboot format:ext4 userdata` wipes them and a plain build property
+# cannot set them back. An init action can: this runs after /data is
+# mounted and before any of the consumers start.
+#
+# Everything here is conditional on the marker file being ABSENT, so a user
+# who deliberately turns a toggle off in Settings is not fought with on the
+# next boot. The marker is created once and the block never runs again for
+# that /data.
+#
+# What each line maps to, verified against the LineageOS 20 source and a
+# device where the toggles were flipped by hand:
+#   settings global development_settings_enabled 1   Developer options
+#   settings global adb_enabled 1                     USB debugging
+#   /data/adbroot/enabled = 1                         Rooted debugging
+#       (packages/modules/adb/root/adbroot_service.cpp reads exactly this
+#       file at start; adb_root.rc creates the directory on post-fs-data)
+#   persist.sys.usb.config = adb                      USB function set
+
+on post-fs-data
+    # adb_root.rc also does this; harmless to repeat, and it must exist
+    # before the write below whichever .rc init parses first.
+    mkdir /data/adbroot 0700 root root
+    exec_start developer-mode-seed
+
+# A oneshot rather than inline `exec`: `settings` needs the system server's
+# content provider, which is not up at post-fs-data. The service waits for
+# it (sys.boot_completed) and then seeds everything in one place.
+service developer-mode-seed /system_ext/bin/developer-mode-seed
+    user root
+    group root shell
+    oneshot
+    disabled
+    seclabel u:r:su:s0
