@@ -181,7 +181,7 @@ BUILD_CC = clang
 
 # Extra paths to prepend to the PATH variable. You'll probably want
 # to specify the clang path here (the default).
-BUILD_PATH = /usr/lib/llvm-android-14.0-r450784d
+BUILD_PATH = /usr/lib/llvm-android-14.0-r450784d/bin
 
 # Extra packages to add to the Build-Depends section. Mainline builds
 # can have this section empty, unless cross-building.
