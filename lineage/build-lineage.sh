@@ -96,7 +96,20 @@ id_args() {
 # home, and a home on a tmpfs would throw away the git object cache between
 # phases. :z relabels for SELinux hosts (Fedora, RHEL) and is a no-op elsewhere.
 in_container() {
+    # --pids-limit is NOT optional at -j32. podman defaults the container cgroup
+    # to pids.max=2048, and the Java half of an AOSP build runs dozens of r8/d8
+    # JVMs in parallel, each with its own ForkJoinPool. The ceiling is reached
+    # around 96%, deep into the Java targets, and the failure does not name it:
+    #   runtime: failed to create new OS thread (have 8 already; errno=11)
+    #   pthread_create failed (EAGAIN)
+    #   java.lang.OutOfMemoryError: unable to create native thread
+    # That reads like memory exhaustion and is not -- the box had 50 GB free.
+    #
+    # An explicit large number rather than "unlimited": podman and docker
+    # disagree on whether 0 or -1 means unlimited, and 32768 is unambiguous to
+    # both while still far below the host's 375354.
     "$RT" run --rm -i \
+        --pids-limit=32768 \
         $(id_args) \
         -v "$WORK":/aosp:z \
         -e HOME=/aosp/.home \

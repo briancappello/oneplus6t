@@ -60,6 +60,16 @@ report_outcome() {
 
 deadline=$(( $(date +%s) + MAX_MINUTES * 60 ))
 while :; do
+    # Report a failure the moment it appears, not when the container finally
+    # exits. ninja keeps scheduling the targets already queued after a target
+    # fails, so a build can run for a long time -- and print thousands more
+    # progress lines -- after the failure that doomed it. Waiting for the
+    # container to stop meant sitting through all of that in silence.
+    if build_region | grep -qaE '^FAILED:|^ninja: build stopped'; then
+        echo "=== FAILED at $(progress) ==="
+        build_region | grep -aE '^FAILED:|missing dependencies|EAGAIN|OutOfMemoryError|errno=11|^ninja: build stopped' | head -10
+        exit 1
+    fi
     if [ -z "$("$RT" ps -q 2>/dev/null)" ]; then
         echo "=== work stopped, $(progress) ==="
         report_outcome
