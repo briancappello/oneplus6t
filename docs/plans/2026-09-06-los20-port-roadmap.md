@@ -181,7 +181,48 @@ against a system that already works.
 
 ## Phase 2: Build LineageOS 20 and boot it on the other slot
 
-**Status:** not started
+**Status:** done (2026-09-06). Build and flash scripts in `lineage/`.
+
+**Exit evidence**
+- `./lineage/build-lineage.sh all` on taichi produces the five images from
+  the pinned manifest in a pinned `debian:bookworm` container
+  (`lineage/Containerfile`); MindTheGapps built in via LineageOS's
+  `vendor/extra/product.mk` hook, zero upstream edits.
+- Flashed to slot b over `fastboot format:ext4 userdata`. LineageOS
+  `20.0-20260906-UNOFFICIAL-fajita` boots (MTP at 60 s plain, 90 s with
+  GApps). SIM detected and a call placed, WiFi, both cameras, audio: all
+  confirmed. Mobile data not testable yet (no provisioned line).
+- Built `vendor.img`'s `fstab.qcom` mounts `userdata` as `/data` (ext4,
+  `fileencryption=ice`) and names `linuxroot` zero times. Verified against
+  the image, not the source.
+- Round trip: `set_active a` boots the Droidian kernel in 25 s, slot `_a`,
+  `datapart=linuxroot`, container reports Android 9; every dual-boot
+  invariant in `verify-device.sh` passes. phosh did not start (24/26; the
+  old api28 display stack, not investigated: Phase 3+ replaces this
+  install). Phone left on slot b.
+- Phase 3 ground truth captured in `logs/lineage20/`: `getprop`, vintf
+  manifest + 20 fragments, kernel `.config` (5604 lines), `dmesg` (5885
+  lines), `/proc/cmdline`, mounts, partitions, `/vendor/lib/modules`.
+
+**Learned the hard way, now in the scripts**
+- The manifest branch is `lineage-20.0`; `lineage-20` does not exist on
+  `LineageOS/android`. Device/kernel/blob repos do use `lineage-20`.
+- LineageOS 20 needs `git-lfs` (chromium-webview prebuilts) and
+  `openssh-client` (manifest declares an ssh remote nobody uses) in the
+  build container, and `ALLOW_MISSING_DEPENDENCIES=true` because it ships
+  `cts` without `tools/tradefederation/core`. Do NOT exclude the `cts` repo
+  group: it also removes `tools/trebuchet`, which defines `jsonlib`.
+- podman defaults `pids.max=2048`; at `-j32` each r8/d8 JVM sizes itself
+  for the whole box (~44 threads) and the build dies at 96% with
+  `pthread_create EAGAIN`, which reads like OOM and is not. `--pids-limit`.
+- `bacon` produces an A/B OTA; `system`/`vendor`/`vbmeta` exist only in
+  `payload.bin` and `obj/PACKAGING/target_files_intermediates/*/IMAGES/`.
+- The `error -13` firmware lines in LineageOS's `dmesg` are the PIL
+  loader's first attempt failing under SELinux before the direct load
+  succeeds; every subsystem shows `loading from 0x...` right after. That
+  pattern IS the healthy baseline Phase 3 must reproduce.
+
+**Status before this run:** not started
 
 **Goal:** a reproducible LineageOS 20 build for fajita, made on taichi from
 pinned sources, flashed to the spare slot, booting to the LineageOS home
@@ -195,7 +236,9 @@ tree 2023-08, kernel 2024-02, blobs 2022-09 / 2023-08), which pins the build
 for free.
 
 **Inputs (verified)**
-- Manifest: LineageOS `android` @ `lineage-20`.
+- Manifest: LineageOS `android` @ `lineage-20.0` (`569c0d5ee`). Note the
+  `.0`: the device, kernel and blob branches are `lineage-20`, but the
+  manifest repo has no such branch and `repo init -b lineage-20` fails.
 - `LineageOS/android_device_oneplus_fajita` @ `lineage-20`,
   `LineageOS/android_device_oneplus_sdm845-common` @ `lineage-20`
   (`520b6e4a8`), `LineageOS/android_hardware_oneplus` (from
@@ -256,12 +299,14 @@ for free.
   LineageOS first boot against a `userdata` that still holds Droidian
   destroys the working install.
 
-**Detailed plan:** `docs/plans/<date>-los20-build.md`.
+**Detailed plan:** none written; the scripts in `lineage/` carry their
+reasoning in comments and the commit log on `los20-port` is the record.
 
 ---
 ## Phase 3: Halium kernel from the LineageOS tree (the critical path)
 
-**Status:** not started
+**Status:** in progress (2026-09-06). Detailed plan:
+`docs/plans/2026-09-06-los20-kernel.md`.
 
 **Goal:** a Halium-capable 4.9.337 kernel built from the same LineageOS
 `lineage-20` kernel tree Phase 2 used, packaged the way the current kernel
