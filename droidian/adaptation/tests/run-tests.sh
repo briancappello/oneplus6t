@@ -174,7 +174,7 @@ fi
 # as a rejected password. HOKC_HELPER points at a missing file so the script
 # stops right after the gate without needing root or dpkg-statoverride.
 APPLY="$ADAPT/halium-oldkernel-compat/usr/lib/halium-oldkernel-compat/apply"
-for c in "4.9-113-oneplus-fajita:fix" "5.0.9:fix" "5.1.0:skip" "6.1.0-13-arm64:skip"; do
+for c in "4.9-337-oneplus-fajita:fix" "5.0.9:fix" "5.1.0:skip" "6.1.0-13-arm64:skip"; do
     kv=${c%%:*}; want=${c##*:}
     got=$(HOKC_UNAME="echo $kv" HOKC_HELPER=/nonexistent "$APPLY" 2>&1)
     ok=0

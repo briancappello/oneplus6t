@@ -498,12 +498,13 @@ reference port and the values in `kernel-info.mk`.
 
 Upstream targets `DEVICE_MODEL=oneplus6` with `KERNEL_DEFCONFIG=enchilada_defconfig`
 and calls itself "Oneplus 6/6T". We retarget to `fajita`, so artifacts are named
-`linux-bootimage-4.9-113-oneplus-fajita` and there is no ambiguity about which
+`linux-bootimage-4.9-337-oneplus-fajita` and there is no ambiguity about which
 device an image is for.
 
-`fajita_defconfig` is byte-identical to `enchilada_defconfig` — that file holds
-only SoC configuration and contains no device-name strings, so this is a naming
-change, not a functional one. The device tree genuinely covers the 6T already:
+`fajita_defconfig` is LineageOS's `enchilada_defconfig` plus the reviewed
+`halium.delta` next to it (see `docs/plans/2026-09-06-los20-kernel.md`); the
+enchilada file holds only SoC configuration and contains no device-name
+strings, so the rename itself is not functional. The device tree genuinely covers the 6T already:
 `CONFIG_BUILD_ARM64_DT_OVERLAY=y`, and `arch/arm64/boot/dts/qcom/Makefile` lists
 10 `fajita-*.dtbo` overlays beside the enchilada ones, all on the shared
 `sdm845-v2.1.dtb` base. The bootloader selects the right overlay by hardware ID.
