@@ -97,6 +97,15 @@ find "$HERE/packaging/debian" -maxdepth 1 -type f -print0 \
 cp "$HERE/packaging/debian/source/format" "$KERNEL_DIR/debian/source/format"
 [ -f "$KERNEL_DIR/debian/control" ] \
     || { echo "packaging overlay did not land: no debian/control in $KERNEL_DIR" >&2; exit 1; }
+
+# debian/control repeats kernel-info.mk's DEB_TOOLCHAIN inline in
+# Build-Depends, and control is what apt reads. Updating one and not the
+# other installed clang 6.0 against a BUILD_PATH for clang 14, twice. Assert
+# they agree before spending a build on it.
+mk_tc="$(sed -n 's/^DEB_TOOLCHAIN = //p' "$HERE/packaging/debian/kernel-info.mk")"
+grep -qF "$mk_tc" "$HERE/packaging/debian/control" \
+    || { echo "DEB_TOOLCHAIN in kernel-info.mk is not in debian/control Build-Depends:" >&2
+         echo "  $mk_tc" >&2; exit 1; }
 cp -v "$HERE/packaging/arch/arm64/configs/fajita_defconfig" \
       "$KERNEL_DIR/arch/arm64/configs/fajita_defconfig" | sed 's/^/    /'
 # regenerated from git history by releng-build-changelog; a stale one breaks it

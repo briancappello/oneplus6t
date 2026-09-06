@@ -186,7 +186,7 @@ BUILD_PATH = /usr/lib/llvm-android-14.0-r450784d/bin
 # Extra packages to add to the Build-Depends section. Mainline builds
 # can have this section empty, unless cross-building.
 # The default is enough to install the Android toolchain, including clang.
-DEB_TOOLCHAIN = linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, clang-android-14.0-r450784d
+DEB_TOOLCHAIN = linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, binutils-gcc4.9-aarch64-linux-android, clang-android-14.0-r450784d
 
 # Where we're building on
 DEB_BUILD_ON = amd64

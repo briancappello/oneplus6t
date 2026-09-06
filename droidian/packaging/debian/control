@@ -22,7 +22,7 @@ Build-Depends: build-essential,
                mkbootimg (>= 10.0.0),
                mkdtboimg,
                avbtool,
-               linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, clang-android-14.0-r450784d
+               linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, binutils-gcc4.9-aarch64-linux-android, clang-android-14.0-r450784d
 Standards-Version: 4.5.0.3
 Vcs-Browser: https://github.com/briancappello/oneplus6t
 Vcs-Git: https://github.com/briancappello/oneplus6t.git
