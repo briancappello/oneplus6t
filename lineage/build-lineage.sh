@@ -4,9 +4,15 @@
 # any Linux box with podman or docker.
 #
 #   ./lineage/build-lineage.sh image     # build the toolchain container only
+#   ./lineage/build-lineage.sh doctor    # check disk, runtime and uid mapping
 #   ./lineage/build-lineage.sh sync      # repo init + repo sync (hours, ~200 GB)
 #   ./lineage/build-lineage.sh build     # brunch fajita (hours)
-#   ./lineage/build-lineage.sh all       # image, then sync, then build
+#   ./lineage/build-lineage.sh all       # image, doctor, sync, then build
+#
+# You are meant to hand-edit the tree in $LINEAGE_WORK as your normal user
+# between phases; the container bind-mounts it and sees changes immediately,
+# with no copy step and no root-owned files. `doctor` is what proves that, and
+# `all` runs it before committing to the long phases.
 #
 # Environment:
 #   LINEAGE_WORK   source tree + out/ + ccache   (default: $HOME/lineage20)
@@ -153,6 +159,38 @@ phase_image() {
                   echo "    glibc: $(ldd --version | head -1)"' || true
 }
 
+# Prove the host and the container are the same user on the same tree, in both
+# directions. The whole workflow depends on being able to hand-edit the tree as
+# yourself between builds and have the container pick it up with no copy step.
+# When this breaks it does NOT fail loudly -- it silently leaves root-owned
+# files that only surface hours later as a mid-build permission denied, or an
+# edit the build never sees.
+phase_doctor() {
+    check_disk
+    echo ">>> runtime: $RT $("$RT" --version | awk '{print $NF}')"
+    "$RT" image exists "$IMAGE_TAG" 2>/dev/null \
+        || { echo "doctor: image $IMAGE_TAG missing; run: $0 image" >&2; exit 1; }
+
+    local probe="$WORK/.doctor-probe"
+    echo "host" > "$probe"
+    in_container "test \"\$(cat /aosp/.doctor-probe)\" = host \
+                  || { echo 'doctor: container cannot read host-written file' >&2; exit 1; }
+                  echo container >> /aosp/.doctor-probe" \
+        || { rm -f "$probe"; echo "doctor: container write failed" >&2; exit 1; }
+
+    local owner; owner="$(stat -c '%U' "$probe")"
+    if [ "$owner" != "$(id -un)" ]; then
+        rm -f "$probe"
+        echo "doctor: container wrote files as '$owner', expected '$(id -un)'." >&2
+        echo "  Under rootless podman this means --userns=keep-id is not taking" >&2
+        echo "  effect; check /etc/subuid and /etc/subgid for $(id -un)." >&2
+        exit 1
+    fi
+    [ -w "$probe" ] || { rm -f "$probe"; echo "doctor: host cannot edit container-written file" >&2; exit 1; }
+    rm -f "$probe"
+    echo ">>> uid mapping OK: host and container are both $(id -un) ($(id -u):$(id -g)) on $WORK"
+}
+
 phase_sync() {
     check_disk
     seed_home
@@ -226,9 +264,10 @@ phase_build() {
 }
 
 case "${1:-all}" in
-    image) phase_image ;;
-    sync)  phase_sync ;;
-    build) phase_build ;;
-    all)   phase_image; phase_sync; phase_build ;;
-    *) echo "usage: build-lineage.sh [image|sync|build|all]" >&2; exit 1 ;;
+    image)  phase_image ;;
+    doctor) phase_doctor ;;
+    sync)   phase_sync ;;
+    build)  phase_build ;;
+    all)    phase_image; phase_doctor; phase_sync; phase_build ;;
+    *) echo "usage: build-lineage.sh [image|doctor|sync|build|all]" >&2; exit 1 ;;
 esac
