@@ -6,7 +6,8 @@
 #   ./lineage/build-lineage.sh image     # build the toolchain container only
 #   ./lineage/build-lineage.sh doctor    # check disk, runtime and uid mapping
 #   ./lineage/build-lineage.sh sync      # repo init + repo sync (hours, ~200 GB)
-#   ./lineage/build-lineage.sh build     # brunch fajita (hours)
+#   ./lineage/build-lineage.sh build     # brunch fajita (hours), then extract
+#   ./lineage/build-lineage.sh extract   # publish the 5 images to $LINEAGE_WORK/images
 #   ./lineage/build-lineage.sh all       # image, doctor, sync, then build
 #
 # You are meant to hand-edit the tree in $LINEAGE_WORK as your normal user
@@ -429,14 +430,55 @@ phase_build() {
         source build/envsetup.sh &&
         lunch $LUNCH_TARGET &&
         m -j$BUILD_JOBS bacon"
-    echo ">>> build complete; images under $WORK/out/target/product/fajita"
+    echo ">>> build complete"
+    phase_extract
+}
+
+# Publish the five flashable images to one predictable directory, the way
+# droidian/build-kernel.sh publishes to droidian/out/images.
+#
+# `bacon` builds an A/B OTA zip, so the product directory gets only boot.img,
+# dtbo.img and the zip -- system, vendor and vbmeta exist ONLY inside
+# payload.bin and as target-files intermediates. Phase 3 needs them as raw
+# images, and digging them out of an 847 MB payload is the kind of manual step
+# that ends up in a shell history instead of a script.
+#
+# The intermediates path embeds the build username (…-target_files-eng.brian),
+# so it is globbed rather than spelled out; hard-coding it would break for
+# anyone else running this.
+phase_extract() {
+    local src dst f sz
+    src="$(echo "$WORK"/out/target/product/fajita/obj/PACKAGING/target_files_intermediates/*/IMAGES)"
+    [ -d "$src" ] || { echo "build-lineage.sh: no target-files IMAGES dir under $WORK/out" >&2; exit 1; }
+
+    dst="$WORK/images"
+    mkdir -p "$dst"
+    echo ">>> extracting images to $dst"
+    for f in boot.img dtbo.img system.img vendor.img vbmeta.img; do
+        [ -f "$src/$f" ] || { echo "build-lineage.sh: missing $f in $src" >&2; exit 1; }
+        cp -f "$src/$f" "$dst/$f"
+        sz=$(stat -c%s "$dst/$f")
+        printf '    %-12s %12s bytes  %s\n' "$f" "$sz" "$(sha256sum "$dst/$f" | cut -c1-16)"
+    done
+
+    # The signed OTA is what recovery sideloads, so keep it alongside the raw
+    # images rather than leaving it buried in the product directory.
+    for f in "$WORK"/out/target/product/fajita/lineage-*.zip; do
+        [ -f "$f" ] || continue
+        cp -f "$f" "$dst/"
+        printf '    %-12s %12s bytes\n' "$(basename "$f")" "$(stat -c%s "$f")"
+    done
+
+    ( cd "$dst" && sha256sum ./*.img > SHA256SUMS )
+    echo ">>> images ready in $dst"
 }
 
 case "${1:-all}" in
     image)  phase_image ;;
     doctor) phase_doctor ;;
-    sync)   guard_single_instance; phase_sync ;;
-    build)  guard_single_instance; phase_build ;;
+    sync)    guard_single_instance; phase_sync ;;
+    build)   guard_single_instance; phase_build ;;
+    extract) phase_extract ;;
     all)    guard_single_instance; phase_image; phase_doctor; phase_sync; phase_build ;;
-    *) echo "usage: build-lineage.sh [image|doctor|sync|build|all]" >&2; exit 1 ;;
+    *) echo "usage: build-lineage.sh [image|doctor|sync|build|extract|all]" >&2; exit 1 ;;
 esac
