@@ -411,6 +411,15 @@ expect_contains "data runs when the install is still on userdata" /tmp/p-move.$$
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-stay.$$
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-stay.$$ 2>&1; rc=$?
 expect_contains "data skips once the install is on linuxroot" /tmp/p-stay.$$ 'data: skipped'
+# FORCE=1 rebuilt the image, so it must also be flashed: the device's package
+# versions cannot tell a rebuilt rootfs from the one it has. edl stays gated
+# on evidence; FORCE never rewrites the GPT.
+FORCE=1 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-force.$$ 2>&1; rc=$?
+expect_contains "FORCE=1 flashes data even when versions match" /tmp/p-force.$$ 'data: installing rootfs'
+: > "$HW_LOG"
+FORCE=1 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase edl > /tmp/p-force-edl.$$ 2>&1; rc=$?
+expect_absent "FORCE=1 never repartitions on its own" "$HW_LOG" 'repartition-dualboot'
+rm -f /tmp/p-force.$$ /tmp/p-force-edl.$$
 rm -rf /tmp/artifacts-test /tmp/pr-move.$$ /tmp/p-move.$$ /tmp/pr-stay.$$ /tmp/p-stay.$$
 
 # --artifacts mode accepts a path and runs all phases

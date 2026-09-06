@@ -324,6 +324,14 @@ if [ "$MODE" = artifacts ]; then
     if wanted edl      && ! skip_edl      "$PROBE_FILE" "$MANIFEST"; then run_edl=yes; fi
     if wanted boot     && ! skip_boot     "$PROBE_FILE" "$MANIFEST"; then run_boot=yes; fi
     if wanted data     && ! skip_data     "$PROBE_FILE" "$MANIFEST"; then run_data=yes; fi
+    # FORCE=1 rebuilt every artifact, and the device cannot tell a rebuilt
+    # rootfs or kernel from the one it has by the evidence the probe reads.
+    # So it flashes them too. edl is not on this list: nothing forces a GPT
+    # rewrite except a device that demonstrably lacks linuxroot.
+    if [ "${FORCE:-0}" = 1 ]; then
+        wanted boot && run_boot=yes
+        wanted data && run_data=yes
+    fi
     if wanted activate && ! skip_activate "$PROBE_FILE" "$MANIFEST"; then run_activate=yes; fi
     # Anything that puts the phone in the bootloader has to take it back out
     # again, whatever the probe said before the flash began. Deciding this from
