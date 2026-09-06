@@ -1,0 +1,89 @@
+# Halium delta: applied on top of LineageOS's enchilada_defconfig to produce
+# fajita_defconfig. Every line here has a reason. Everything in the old
+# 4.9.113 defconfig that is NOT here was deliberately dropped; the commit
+# that introduced this file lists what and why.
+#
+# FORMAT RULE, learned the hard way: this is a Kconfig fragment read by
+# scripts/kconfig/merge_config.sh, which finds directives by grepping for the
+# option's symbol name. A COMMENT that spells out a symbol is picked up as
+# that symbol's directive. A comment explaining the module-signing line
+# below, which spelled the option's name, was taken as its new value, and
+# only olddefconfig's cleanup made the result come out right. So: comments
+# never spell an option's full symbol. Describe it in words instead.
+# (The phrase "is not set" on a comment line is likewise avoided.)
+#
+# Verified against the running LineageOS 20 kernel's /proc/config.gz
+# (logs/lineage20/kernel-config.txt): each =y below is something LineageOS
+# does NOT set, each "is not set" is something LineageOS DOES set.
+
+# ---- containers: lxc runs the Android vendor -----------------------------
+CONFIG_PID_NS=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_USER_NS=y
+CONFIG_CGROUP_DEVICE=y
+CONFIG_MEMCG=y
+CONFIG_MEMCG_SWAP=y
+CONFIG_CGROUP_PERF=y
+CONFIG_NET_CLS_CGROUP=y
+CONFIG_CGROUP_NET_CLASSID=y
+
+# ---- systemd / udev ------------------------------------------------------
+CONFIG_FHANDLE=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_SYSVIPC=y
+CONFIG_POSIX_MQUEUE=y
+CONFIG_AUTOFS4_FS=y
+CONFIG_INOTIFY_USER=y
+CONFIG_FANOTIFY=y
+CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
+CONFIG_TMPFS_XATTR=y
+CONFIG_EXT4_FS_POSIX_ACL=y
+CONFIG_KEYS=y
+CONFIG_ENCRYPTED_KEYS=y
+
+# ---- security: Droidian boots with security=apparmor apparmor=1 ----------
+# SELinux stays compiled in (the vendor's init expects the LSM to exist) but
+# must not be the default and must be switchable off from the cmdline.
+CONFIG_SECURITY_APPARMOR=y
+CONFIG_SECURITY_APPARMOR_HASH=y
+CONFIG_SECURITY_APPARMOR_BOOTPARAM_VALUE=1
+CONFIG_DEFAULT_SECURITY_APPARMOR=y
+CONFIG_DEFAULT_SECURITY="apparmor"
+CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE=0
+CONFIG_SECURITY_SELINUX_DISABLE=y
+CONFIG_SECURITYFS=y
+CONFIG_SECURITY_NETWORK=y
+CONFIG_SECURITY_PATH=y
+# LineageOS defaults to SELinux as the LSM; one default only, and it is
+# AppArmor above.
+# CONFIG_DEFAULT_SECURITY_SELINUX is not set
+
+# ---- modules: halium and the adaptation ship unsigned modules --------------
+# LineageOS enforces module signatures; the old 4.9.113 build never did.
+# CONFIG_MODULE_SIG is not set
+
+# ---- console -------------------------------------------------------------
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_CONSOLE_TRANSLATIONS=y
+
+# ---- rootfs: rootfs.img is squashfs-xz in the halium initramfs path -------
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_ZLIB=y
+CONFIG_SQUASHFS_FILE_DIRECT=y
+CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
+CONFIG_XZ_DEC=y
+
+# ---- USB: SSH over the gadget on any host ---------------------------------
+# NCM is already in LineageOS's config; RNDIS is for Windows hosts.
+CONFIG_USB_CONFIGFS_RNDIS=y
+
+# Not carried from the 4.9.113 delta, because the symbols do not exist in
+# 4.9.337 (zero Kconfig definitions, and not from our patches; they were
+# junocomp-tree additions): the AppArmor unconfined-init option, and the
+# pstore ramoops annotation-append option. The checker caught both being
+# silently dropped by olddefconfig.
