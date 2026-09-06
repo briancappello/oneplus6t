@@ -5,6 +5,13 @@
 # `fastboot` by name cannot reach a real phone from a test even if it forgets
 # a flag. Safety is a property of the environment here, not of a branch inside
 # provision.sh that someone must remember to write.
+# FAKE_FASTBOOT_HANG names a subcommand that should block instead of answering,
+# standing in for a bootloader that reboots without replying.
+if [ -n "${FAKE_FASTBOOT_HANG:-}" ] && [ "${1:-}" = "$FAKE_FASTBOOT_HANG" ]; then
+    printf 'fastboot %s\n' "$*" >> "${HW_LOG:-/dev/null}"
+    sleep 600
+    exit 0
+fi
 printf 'fastboot %s\n' "$*" >> "${HW_LOG:-/dev/null}"
 
 case "$1" in

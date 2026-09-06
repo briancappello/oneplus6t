@@ -424,7 +424,8 @@ goto, flash = idx("device-goto fastboot"), idx("fastboot flash")
 print("goto_before_write=" + str(goto >= 0 and flash >= 0 and goto < flash))
 PYEOF
 expect_contains "before the first write, not after" /tmp/p-gord.$$ 'goto_before_write=True'
-expect_contains "and taken back out of it"          /tmp/p-art.$$ 'activate: activating'
+expect_contains "and taken back out of it"          /tmp/p-art.$$ 'activate: rebooting out of the bootloader'
+expect_contains "leaving the bootloader is waited for" "$HW_LOG" 'device-goto droidian'
 
 # A phone that will not enter the bootloader must stop the run there, with
 # nothing flashed, rather than firing fastboot at a device that cannot hear it.
@@ -434,7 +435,20 @@ FAKE_GOTO_RC=1 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
     --phase boot > /tmp/p-nogoto.$$ 2>&1; rc=$?
 expect_rc "a phone that will not enter the bootloader fails the run" 1 "$rc"
 expect_absent "and nothing is flashed at it" "$HW_LOG" 'fastboot flash'
-rm -f /tmp/p-gord.$$ /tmp/p-nogoto.$$
+
+# fastboot not answering a reboot is not the same as the phone not rebooting.
+# A real run sat on that unanswered read for six minutes; what settles it is the
+# state the phone is in, so the run must bound the wait and then go and look.
+: > "$HW_LOG"
+FAKE_FASTBOOT_HANG=reboot FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
+    ACTIVATE_TIMEOUT=2 VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
+    timeout 60 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    > /tmp/p-hang.$$ 2>&1; rc=$?
+expect_rc "an unanswered reboot does not hang the run" 0 "$rc"
+expect_contains "it says fastboot went quiet" /tmp/p-hang.$$ 'did not confirm the reboot'
+expect_contains "and confirms from the phone's state instead" "$HW_LOG" 'device-goto droidian'
+
+rm -f /tmp/p-gord.$$ /tmp/p-nogoto.$$ /tmp/p-hang.$$
 
 # An unreachable device is a failed verification, not a warning. Exiting 0 here
 # reported a successful provision of a phone that never came back.

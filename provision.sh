@@ -399,12 +399,26 @@ if [ "$MODE" = artifacts ]; then
         echo "    data: skipped (already correct)"
     fi
 
-    # Phase 4: activate - activate Droidian slot
+    # Phase 4: activate - leave the bootloader for the system that was flashed
     if [ "$run_activate" = yes ]; then
-        echo "    activate: activating Droidian slot"
-        # For now, just reboot - the slot is already set by the flash
-        fastboot reboot || die "failed to reboot"
-        echo "    activate: rebooted"
+        echo "    activate: rebooting out of the bootloader"
+        # Bounded, because this hung for six minutes on a real run: after a large
+        # flash the bootloader reboots without answering, and fastboot sits on a
+        # USB read that never returns. The command has already been delivered by
+        # then, so a timeout here is not a failure to reboot -- it is fastboot
+        # failing to notice that it worked. What settles it is the state the phone
+        # is actually in, which is what gets checked next.
+        timeout "${ACTIVATE_TIMEOUT:-60}" fastboot reboot >/dev/null 2>&1 \
+            || echo "    activate: fastboot did not confirm the reboot; checking the phone instead"
+
+        # The phone leaving the bootloader is the outcome that matters, and it is
+        # observable. Waiting on it means an unanswered reboot costs a moment
+        # rather than the whole run.
+        if device-goto droidian; then
+            echo "    activate: the phone left the bootloader"
+        else
+            die "the phone did not leave the bootloader after flashing"
+        fi
     elif wanted activate; then
         echo "    activate: skipped (already active)"
     fi
