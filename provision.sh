@@ -58,6 +58,12 @@ except Exception:
 ALL = ["kernel", "camera", "adaptation", "rootfs"]
 have = {a.get("target") for a in man.get("artifacts", {}).values()}
 
+# FORCE=1: a complete manifest says nothing about whether the sources behind
+# it have moved, and this decision has no view of them. build.sh does, but it
+# is only handed what is asked for here, and it refuses an empty plan.
+if os.environ.get("FORCE") == "1":
+    print(" ".join(ALL)); raise SystemExit
+
 # An unreadable device is not evidence that anything can be skipped, so an
 # incomplete probe asks for everything rather than guessing.
 if facts.get("probe_complete") != "yes":
@@ -72,7 +78,8 @@ emit_plan() {
     TARGETS="$targets" python3 - <<'PY'
 import json, os
 targets = os.environ["TARGETS"].split()
-print(json.dumps({"build": targets, "force": False}, indent=2, sort_keys=True))
+force = os.environ.get("FORCE") == "1"
+print(json.dumps({"build": targets, "force": force}, indent=2, sort_keys=True))
 PY
 }
 
