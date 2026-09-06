@@ -342,7 +342,7 @@ rm -f /tmp/pr-act.$$
 # Skip detection: data phase skips when package versions match. One build target
 # ships several packages -- adaptation alone ships three -- so every .deb in the
 # manifest has to be accounted for, not one representative per target.
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-data-match.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-data-match.$$
 if skip_data /tmp/pr-data-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  PASS  data phase skips when versions match"; pass=$((pass+1))
 else
@@ -350,7 +350,7 @@ else
 fi
 
 # Skip detection: data phase runs when package version differs
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-diff.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-diff.$$
 if skip_data /tmp/pr-data-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  FAIL  data phase runs when version differs"; fail=$((fail+1))
 else
@@ -359,7 +359,7 @@ fi
 
 # A second package from the same target, missing on the device, must still stop
 # the skip: checking one .deb per target would have called this a match.
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-part.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-part.$$
 expect_pred "data runs when a sibling package of the same target is absent" \
     run skip_data /tmp/pr-data-part.$$ "$ROOT/tests/fixtures/manifest.json"
 
@@ -383,6 +383,18 @@ timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-fl
 expect_rc "data phase exits 0" 0 "$rc"
 expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: installing rootfs'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
+
+# Matching package versions are not a reason to skip while the install is
+# still on userdata: the whole point of the data phase is to move it.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=userdata\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-move.$$
+mkdir -p /tmp/artifacts-test/droidian
+touch /tmp/artifacts-test/droidian/linuxroot.simg
+timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-move.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-move.$$ 2>&1; rc=$?
+expect_contains "data runs when the install is still on userdata" /tmp/p-move.$$ 'data: installing rootfs'
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-stay.$$
+timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-stay.$$ 2>&1; rc=$?
+expect_contains "data skips once the install is on linuxroot" /tmp/p-stay.$$ 'data: skipped'
+rm -rf /tmp/artifacts-test /tmp/pr-move.$$ /tmp/p-move.$$ /tmp/pr-stay.$$ /tmp/p-stay.$$
 
 # --artifacts mode accepts a path and runs all phases
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-ok.$$
