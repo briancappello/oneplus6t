@@ -158,7 +158,16 @@ check_disk() {
 # is ever pushed.
 seed_home() {
     mkdir -p "$WORK/.home" "$WORK/.ccache"
-    [ -f "$WORK/.home/.gitconfig" ] && return
+    # Always rewritten, never skipped when present: an early run created this
+    # file without the lfs filters, and skipping meant the fix could never
+    # reach an existing tree. The content is fully determined by this script,
+    # so rewriting costs nothing.
+    #
+    # The [filter "lfs"] block is what `git lfs install` would write. Without
+    # it git never invokes git-lfs during checkout, so LFS-backed files are
+    # silently not created at all -- not even as pointer files. That surfaces
+    # much later as ninja: "external/chromium-webview/prebuilt/arm64/webview.apk
+    # missing and no known rule to make it".
     cat > "$WORK/.home/.gitconfig" <<'EOF'
 [user]
 	name = lineage builder
@@ -167,8 +176,13 @@ seed_home() {
 	ui = false
 [advice]
 	detachedHead = false
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
 EOF
-    echo ">>> seeded $WORK/.home/.gitconfig"
+    echo ">>> seeded $WORK/.home/.gitconfig (with git-lfs filters)"
 }
 
 # --------------------------------------------------------------------- phases
@@ -317,6 +331,28 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
     kill "$ticker" 2>/dev/null || true
     trap - EXIT
     [ "$rc" -eq 0 ] || { echo "build-lineage.sh: repo sync failed (rc=$rc)" >&2; exit "$rc"; }
+
+    # Materialise LFS content explicitly. repo checks out with whatever filters
+    # were configured at the time, so any project fetched before the lfs filter
+    # existed keeps an empty working tree with no error of any kind. Re-running
+    # sync does not fix it, because repo considers those projects already
+    # up to date. `git lfs pull` is idempotent and cheap when there is nothing
+    # to do, so this runs unconditionally rather than trying to detect the case.
+    echo ">>> materialising git-lfs objects (chromium-webview prebuilts)"
+    in_container 'rc=0
+        for d in external/chromium-webview/prebuilt/*/; do
+            [ -e "$d/.git" ] || continue
+            ( cd "$d" && git lfs pull ) || rc=1
+        done
+        exit $rc'
+
+    # Prove it worked rather than assuming. An LFS pointer is ~130 bytes and a
+    # real WebView APK is tens of MB, so a size floor separates them cleanly.
+    in_container 'for f in external/chromium-webview/prebuilt/*/webview.apk; do
+            sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            printf "    %-52s %s bytes\n" "$f" "$sz"
+            [ "$sz" -gt 1000000 ] || { echo "build-lineage.sh: $f is missing or is an unresolved LFS pointer" >&2; exit 1; }
+        done'
 
     echo ">>> sync complete"
     in_container 'for d in device/oneplus/fajita device/oneplus/sdm845-common \
