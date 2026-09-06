@@ -184,10 +184,20 @@ fi
 # why the cmdline names the partition as /dev/disk/by-partlabel/linuxroot.
 say "building linuxroot.img (WITH journal - see comment at top)"
 rm -f "$OUT"
-mke2fs -t ext4 -L data -d "$STAGE" -b 4096 -m 0 "$OUT" "$IMG_BLOCKS" 2>&1 | tail -2
+# -O ^orphan_file: the halium initramfs carries e2fsprogs 1.43.4 (2017), and
+# orphan_file (default since 1.47) is a feature it does not know. Its e2fsck and
+# resize2fs then fail with "unsupported feature(s)" -- silently, because the
+# script logs "resized" regardless -- so the fs was never checked and never
+# grown past the 9 GiB built here. Verified by running the initramfs's own
+# resize2fs under qemu-user against both variants.
+mke2fs -t ext4 -L data -d "$STAGE" -b 4096 -m 0 -O ^orphan_file "$OUT" "$IMG_BLOCKS" 2>&1 | tail -2
 
 if ! dumpe2fs -h "$OUT" 2>/dev/null | grep -q has_journal; then
     echo "ABORT: produced image has no journal; halium will refuse to mount it" >&2
+    exit 1
+fi
+if dumpe2fs -h "$OUT" 2>/dev/null | grep '^Filesystem features' | grep -q orphan_file; then
+    echo "ABORT: produced image has orphan_file; the initramfs e2fsprogs cannot resize it" >&2
     exit 1
 fi
 
