@@ -392,6 +392,14 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
             [ "$sz" -gt 1000000 ] || { echo "build-lineage.sh: $f is missing or is an unresolved LFS pointer" >&2; exit 1; }
         done'
 
+    # Local product additions. vendor/extra/ is not a repo project; it is a
+    # directory this script owns and LineageOS reads through its
+    # inherit-product-if-exists hook. Copied fresh every sync so the tree
+    # always reflects this checkout, never a previous run.
+    mkdir -p "$WORK/vendor/extra"
+    cp -f "$HERE/vendor-extra/product.mk" "$WORK/vendor/extra/product.mk"
+    echo ">>> installed vendor/extra/product.mk"
+
     echo ">>> sync complete"
     in_container 'for d in device/oneplus/fajita device/oneplus/sdm845-common \
                            hardware/oneplus kernel/oneplus/sdm845 \

@@ -72,4 +72,23 @@
            remote="github"
            revision="a3fc5ad31fba128248747c8f9cc0abab67314af7" />
 
+  <!--
+    Google apps, built into the image rather than sideloaded, so every image
+    this script produces has Play and a reflash never needs a recovery step.
+
+    MindTheGapps names branches with Greek letters, not Android codenames.
+    `tau` is Android 13: verified by reading GmsCore.apk's manifest with
+    aapt2 (targetSdkVersion 33, versionName 22.21.16), not by the branch name.
+    The repo ships standard in-tree makefiles (arm64/arm64-vendor.mk,
+    common/common-vendor.mk); build-lineage.sh adds the inherit-product line.
+
+    GitLab, not GitHub: MindTheGapps has no GitHub mirror. The `gitlab` remote
+    is declared here because the LineageOS manifest defines none.
+  -->
+  <remote name="gitlab" fetch="https://gitlab.com/" />
+  <project name="MindTheGapps/vendor_gapps"
+           path="vendor/gapps"
+           remote="gitlab"
+           revision="e8c101ba0e90b705ec1428da8359401d9d8c7c18" />
+
 </manifest>

@@ -1,56 +1,49 @@
-# Everything bootstrap.py fetches or produces. Nothing here belongs in git:
-# the archives are ~6 GB and the extracted images are another ~5 GB.
-downloads/
-edl/
-oppo_decrypt/
-.venv/
-.work/
-msm/
-releases/
 
-# Unrelated postmarketOS images that happen to live in this directory
-*postmarketOS*.img
-*postmarketOS*.img.xz
-
-# Build output. build.sh writes artifacts under the paths below and the manifest
-# at the repo root, where provision.sh reads it. All of it is reproducible from
-# the source commit the manifest records, so none of it is worth versioning and
 # a stale one committed here is actively misleading.
-out/
-/manifest.json
-
-# Records that the operator accepted the destructive EDL warning on this
+# at the repo root, where provision.sh reads it. All of it is reproducible from
+# Build output. build.sh writes artifacts under the paths below and the manifest
 # checkout. Local state, never shared.
-.edl-acknowledged
-
-# Local scratch
-*.pyc
-__pycache__/
-
-# edl runtime cache (contains the device serial)
-edl_config.json
-
 # dead: references $ROM/*.img paths that never existed
-edl-fix-critical.sh
-
+downloads/
 # Droidian build: sources and artifacts are fetched/generated, only the
-# fajita packaging overlay and the build script are tracked
-droidian/kernel/
-droidian/out/
-droidian/local-repo/
 droidian-build-tools/
-droidian/stage/
-droidian/rootfs/
+# droidian-camera fork: source is cloned and patched, artifacts generated
+droidian/camera-src/
+droidian/kernel/
 droidian/linuxroot.img
 droidian/linuxroot.simg
 droidian/linuxroot.simg.part
-
-# Ramdumps pulled by droidian/dump-ramoops.py -- device RAM, regenerable
-memory/
-
-# droidian-camera fork: source is cloned and patched, artifacts generated
-droidian/camera-src/
+droidian/local-repo/
+droidian/out/
 droidian/out-adaptation/
 droidian/out-camera/
-logs/
+droidian/rootfs/
+droidian/stage/
+edl/
+.edl-acknowledged
+edl_config.json
+edl-fix-critical.sh
+# edl runtime cache (contains the device serial)
+# Everything bootstrap.py fetches or produces. Nothing here belongs in git:
+# fajita packaging overlay and the build script are tracked
 .idea/
+lineage/out/
+# Local scratch
+logs/
+/manifest.json
+memory/
+msm/
+oppo_decrypt/
+out/
+*postmarketOS*.img
+*postmarketOS*.img.xz
+*.pyc
+__pycache__/
+# Ramdumps pulled by droidian/dump-ramoops.py -- device RAM, regenerable
+# Records that the operator accepted the destructive EDL warning on this
+releases/
+# the archives are ~6 GB and the extracted images are another ~5 GB.
+# the source commit the manifest records, so none of it is worth versioning and
+# Unrelated postmarketOS images that happen to live in this directory
+.venv/
+.work/
