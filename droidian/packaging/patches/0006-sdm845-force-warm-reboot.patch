@@ -1,0 +1,42 @@
+From bf165c9ad7e0683ebbeef6cddbc57f35cb3768a5 Mon Sep 17 00:00:00 2001
+From: oneplus6t port <none@localhost>
+Date: Sun, 6 Sep 2026 15:12:37 -0600
+Subject: [PATCH] arm64: dts: sdm845: warm-reset the PMIC on every restart
+
+msm-poweroff reads qcom,force-warm-reboot from the pshold restart node
+and, when present, takes the PON_POWER_OFF_WARM_RESET path on every
+restart rather than only on panic/dload. A warm reset keeps DDR
+contents, so the ramoops region (0x400000@0xac300000, per
+sdm845_enchilada_soc.dtsi and confirmed live on LineageOS: "ramoops:
+attached 0x400000@0xac300000") survives into the next boot and
+/sys/fs/pstore carries the previous boot's console.
+
+Without it, a kernel that dies before userspace goes through a cold
+reset and the log is gone: the first Halium boot on LineageOS 20's
+vendor died ~12 s after handoff, and pstore on the following boot was
+empty. This is the only console this device has -- the UART is on
+unpopulated test points under the shield cans and OnePlus did not enable
+USB-C debug accessory mode -- so it is not optional for bring-up.
+
+Patch 0003 adds a runtime module parameter for the same PMIC decision;
+that only helps once userspace exists to set it. This DT property is the
+build-time form for the boots where nothing does.
+---
+ arch/arm64/boot/dts/qcom/sdm845.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sdm845.dtsi b/arch/arm64/boot/dts/qcom/sdm845.dtsi
+index 8bc98dd5654c..883260feb978 100644
+--- a/arch/arm64/boot/dts/qcom/sdm845.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845.dtsi
+@@ -861,6 +861,7 @@
+ 		reg = <0xC264000 0x4>,
+ 		      <0x1fd3000 0x4>;
+ 		reg-names = "pshold-base", "tcsr-boot-misc-detect";
++		qcom,force-warm-reboot;
+ 	};
+ 
+ 	aop-msg-client {
+-- 
+2.55.0
+
