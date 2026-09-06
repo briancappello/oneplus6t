@@ -27,6 +27,12 @@ FROM docker.io/library/debian@sha256:2f65600e1252c5649d2213e1d1ea4d74253d26514dc
 #   lib32ncurses5-dev -> lib32ncurses-dev
 # libncurses5/libtinfo5 are for AOSP's prebuilt host binaries, which still link
 # the ncurses 5 ABI.
+#
+# openssh-client is NOT optional even though every URL we fetch is https. The
+# LineageOS manifest declares a remote `private` with fetch="ssh://git@github.com",
+# and repo sets up an ssh ControlMaster for any declared ssh remote whether or
+# not a project uses it (no project does). Without the binary, `repo sync` dies
+# immediately with a bare "fatal: ssh not installed".
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
@@ -53,6 +59,7 @@ RUN set -eux; \
         libx11-dev \
         libxml2-utils \
         openjdk-17-jdk-headless \
+        openssh-client \
         procps \
         python-is-python3 \
         python3 \
