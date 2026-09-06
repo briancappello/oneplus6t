@@ -305,10 +305,38 @@ reasoning in comments and the commit log on `los20-port` is the record.
 ---
 ## Phase 3: Halium kernel from the LineageOS tree (the critical path)
 
-**Status:** in progress (2026-09-06). Tasks 1-4 done; Task 5 (reach SSH)
-open. Detailed plan: `docs/plans/2026-09-06-los20-kernel.md`.
+**Status:** done (2026-09-06). Detailed plan:
+`docs/plans/2026-09-06-los20-kernel.md`. Task 6 (version-string ripple
+through tests and docs) is housekeeping and follows separately.
 
-**Where it stands (end of 2026-09-06)**
+**Exit evidence**
+- `./droidian/build-kernel.sh` builds from the pinned LineageOS tree with
+  zero out-of-tree edits: `fajita_defconfig` + 7 committed patches, all
+  35 `halium.delta` lines asserted in-build.
+- Flashed to slot b over LineageOS 20's `vendor_b` and `dtbo_b`: the
+  halium initramfs runs, finds `linuxroot`, and hands off; Droidian's NCM
+  gadget at 28 s, SSH at ~40 s, `uname -r` `4.9-337-oneplus-fajita`,
+  `/userdata` = `linuxroot` 112.7G. Further than the exit bar asked.
+- `dmesg` (`logs/halium-kernel/`): `ipa_fws`, `adsp`, `cdsp`, `slpi` all
+  `loading from 0x...`; `wlan: driver loaded` (built-in); `sound-tavil`
+  probes and `sdm845-tavil-snd-card` registers; no `-13` without a load.
+  Same as LineageOS's. `modem` and `venus` do not load because vendor
+  userspace triggers them and the container is still the api28 GSI:
+  Phase 4.
+
+**The boot loop, found the hard way:** the ABL appends `skip_initramfs
+rootwait ro init=/init root=PARTUUID=<system>` on every normal boot of a
+system-as-root device. The LineageOS tree honours it: the halium initramfs
+was discarded, LineageOS `system_b` mounted as root, LineageOS `/init` ran
+on our kernel until its `bpfloader` failed with `reboot_on_failure` at
+29 s. Silent on USB, 30-60 s per cycle. The junocomp tree had this
+neutered in-tree, so it was never in the patch list; it is patch 0007
+now. Read from the console: `/sys/fs/pstore` after a key-combo reset is
+always empty (cold boot, PON reason says so); the working path is
+`msm_poweroff.dload_on_reboot=1` on the cmdline (patch 0003), which parks
+any reboot in ramdump, then `droidian/dump-ramoops.py` over Sahara.
+
+**Where it stood before the fix (earlier on 2026-09-06)**
 - The kernel builds from the pinned LineageOS tree with zero out-of-tree
   edits: `./droidian/build-kernel.sh` -> `linux-*-4.9-337-oneplus-fajita`
   .debs, `clang-android-14.0-r450784d`, LLVM toolchain end to end
