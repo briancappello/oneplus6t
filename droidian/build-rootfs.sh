@@ -34,10 +34,19 @@ DOWNLOADS="$ROOT/downloads"
 # which is what OxygenOS 9.0.17 gives us and what Droidian requires on the 6T.
 API="${API:-28}"
 RELEASE_REPO="droidian-images/droidian"
-ROOTFS_SIZE="${ROOTFS_SIZE:-8G}"        # setup.sh resizes to 8G when there is
-                                        # no .full_resize marker
-IMG_BLOCKS="${IMG_BLOCKS:-2359296}"     # 9 GiB of 4 KiB blocks; must exceed
-                                        # ROOTFS_SIZE plus fs overhead
+# The inner rootfs.img is grown here, at build time, because the Droidian
+# rootfs ships no e2fsprogs to grow it on the device. 100G is SPARSE: only the
+# ~4.5 GB of real data occupies blocks, and mke2fs -d keeps the holes when it
+# packs the file into the outer image (verified: a 5 GiB sparse file costs 16
+# blocks in a 256 MiB image). A file's logical size is not bounded by its
+# filesystem's size, so this fits in the 9 GiB outer image below; the halium
+# initramfs then grows the outer filesystem to the 114 GiB linuxroot partition
+# on first boot, and verify-device.sh asserts both sizes. The 14 GiB left over
+# is for android-data, the container's /data, which lives beside rootfs.img.
+ROOTFS_SIZE="${ROOTFS_SIZE:-100G}"
+IMG_BLOCKS="${IMG_BLOCKS:-2359296}"     # 9 GiB of 4 KiB blocks; must exceed the
+                                        # ALLOCATED size of the rootfs plus fs
+                                        # overhead, not its sparse logical size
 STAGE="$HERE/stage"
 OUT="$HERE/linuxroot.img"
 SPARSE="$HERE/linuxroot.simg"
@@ -82,6 +91,16 @@ ls -l "$STAGE/rootfs.img" | awk '{printf "    %s bytes\n",$5}'
 say "resizing rootfs to $ROOTFS_SIZE"
 e2fsck -fy "$STAGE/rootfs.img" >/dev/null 2>&1 || true   # rc 1/2 = fixed, fine
 resize2fs -f "$STAGE/rootfs.img" "$ROOTFS_SIZE" 2>&1 | tail -1
+# resize2fs exits 0 on some refusals it only prints. Assert the result: the
+# block count must be within 1% of what was asked for.
+want_blocks=$(( $(numfmt --from=iec "$ROOTFS_SIZE") / 4096 ))
+got_blocks=$(dumpe2fs -h "$STAGE/rootfs.img" 2>/dev/null | awk '/^Block count/{print $3}')
+if [ -z "$got_blocks" ] || [ "$got_blocks" -lt $(( want_blocks * 99 / 100 )) ]; then
+    echo "ABORT: rootfs.img is $got_blocks blocks after resize, wanted $want_blocks" >&2
+    exit 1
+fi
+printf '    rootfs.img: %s blocks (%s), sparse: %s allocated\n' "$got_blocks" "$ROOTFS_SIZE" \
+    "$(du -h "$STAGE/rootfs.img" | cut -f1)"
 
 # setup.sh creates this symlink so the halium initramfs can find the Android
 # container image inside the rootfs.

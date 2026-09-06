@@ -72,6 +72,9 @@ DP=$(findmnt -no SOURCE /userdata 2>/dev/null)
 echo "datapart=$(lsblk -no PARTLABEL "$DP" 2>/dev/null)"
 echo "datafill=$(( $(stat -f -c "%b * %S" /userdata 2>/dev/null || echo 0) * 100 / $(blockdev --getsize64 "$DP" 2>/dev/null || echo 1) ))"
 echo "udmounts=$(findmnt -no TARGET /dev/disk/by-partlabel/userdata 2>/dev/null | wc -l)"
+# The inner rootfs.img is grown to 100G (sparse) at build time; below 90 means
+# an image built with the old 8G default, or one that was never resized.
+echo "rootsize=$(df -BG --output=size / 2>/dev/null | tail -1 | tr -dc 0-9)"
 # systemd resolves an ordering cycle by deleting one job silently. The victim
 # then looks identical to a unit that ran and did nothing, so check explicitly.
 echo "cycles=$(jrn | grep -c "Found ordering cycle")"
@@ -127,5 +130,6 @@ ck "clock never jumped backwards" '[ "$(val timewarp)" = 0 ]'
 ck "droidian data is on linuxroot" '[ "$(val datapart)" = linuxroot ]'
 ck "data fs fills linuxroot"       '[ "$(val datafill)" -ge 95 ] 2>/dev/null'
 ck "userdata is left to Android"   '[ "$(val udmounts)" = 0 ]'
+ck "rootfs is grown past 8G"       '[ "$(val rootsize)" -ge 90 ] 2>/dev/null'
 [ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit $fail

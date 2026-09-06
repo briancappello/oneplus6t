@@ -26,3 +26,4 @@ timewarp=0
 datapart=linuxroot
 datafill=99
 udmounts=0
+rootsize=99
