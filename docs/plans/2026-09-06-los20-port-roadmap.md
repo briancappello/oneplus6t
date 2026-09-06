@@ -305,8 +305,54 @@ reasoning in comments and the commit log on `los20-port` is the record.
 ---
 ## Phase 3: Halium kernel from the LineageOS tree (the critical path)
 
-**Status:** in progress (2026-09-06). Detailed plan:
-`docs/plans/2026-09-06-los20-kernel.md`.
+**Status:** in progress (2026-09-06). Tasks 1-4 done; Task 5 (reach SSH)
+open. Detailed plan: `docs/plans/2026-09-06-los20-kernel.md`.
+
+**Where it stands (end of 2026-09-06)**
+- The kernel builds from the pinned LineageOS tree with zero out-of-tree
+  edits: `./droidian/build-kernel.sh` -> `linux-*-4.9-337-oneplus-fajita`
+  .debs, `clang-android-14.0-r450784d`, LLVM toolchain end to end
+  (`BUILD_LLVM=1`; this tree is `ld.lld`-native and the gcc-4.9 `as`
+  rejects clang 14 output). ~3 min on taichi with ccache.
+- `fajita_defconfig` = LineageOS `enchilada_defconfig` + `halium.delta`
+  (35 lines, each with a reason; 313 lines of the old defconfig dropped in
+  three named buckets). `kernel-config-check.sh` runs in-build and asserts
+  every delta line held. Six patches re-ported and applied fresh each
+  build: 0001 u_ether (one hunk; upstream has the other), 0002 loop, 0003
+  msm-poweroff, 0004 adsprpc, 0005 pm8998 RTC write (new, was a hand
+  edit), 0006 `qcom,force-warm-reboot` (new, for ramoops).
+- **Flashed to slot b over LineageOS 20's vendor and dtbo, the kernel now
+  runs.** It does not yet reach the halium initramfs: no USB gadget, and
+  the user observes a boot loop. That is the open Task 5 item.
+
+**Found the hard way: the LineageOS 20 dtbo makes the bootloader refuse
+non-SELinux kernels.** The first builds died 12-13 s after handoff, back
+in fastboot, retry count untouched, ramoops empty. Not a panic: the
+kernel never ran. Bisected on hardware with LineageOS's own known-good
+kernel and ramdisk, one variable per flash. Either of these alone
+reproduces it: `apparmor=1 security=apparmor` on the cmdline, or
+`SECURITY_SELINUX_BOOTPARAM=y` + `BOOTPARAM_VALUE=0` (SELinux compiled in,
+starts disabled). The old Droidian on slot a had BOTH and booted for a
+year against the OxygenOS 9 DT, so the slot's vendor DT is the constraint.
+Resolution: the delta's LSM section now changes nothing from LineageOS
+(SELinux default, on, permissive via `SELINUX_DEVELOP`) and AppArmor is
+not compiled in; nothing in the halium initramfs, the adaptation or the
+rootfs references it. Ruled out with a flash each: kernel-vs-ramdisk,
+vbmeta contents, the AVB hash footer, header v0 vs v1, the 0x80000000
+base address, and all six patches.
+
+**Also landed on the way** (not in the plan, needed to do the plan):
+- `bin/watch-log`: generic fail-fast watcher for detached runs; judges
+  the log only (done / fail / stall) so it cannot self-match on `pgrep`.
+- `build-kernel.sh` resets the kernel tree to the pin every build. Its
+  patch loop skips "already applied" patches, so a patch removed from
+  `packaging/` stayed in effect forever; three bisect builds labelled
+  "no patches" silently carried all six.
+- `lineage/build-lineage.sh --developer-mode`: Developer options, USB
+  debugging, rooted debugging and promptless adb baked into the image
+  (init oneshot seeds `/data`; `WITH_ADB_INSECURE`). Verified zero-touch:
+  `adb root` answers "already running as root" from the setup wizard.
+  Omitted = stock image.
 
 **Goal:** a Halium-capable 4.9.337 kernel built from the same LineageOS
 `lineage-20` kernel tree Phase 2 used, packaged the way the current kernel
