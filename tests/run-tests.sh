@@ -612,6 +612,19 @@ expect_contains "artifacts are fetched back"      "$rlog" 'manifest.json'
 # A remote build touches no phone, so it must not require one to be attached.
 expect_absent  "a supplied plan probes no device" "$HW_LOG" 'device-ssh'
 
+# A plan that builds nothing is the normal case on a phone that is already
+# current. It must not be handed to build.sh (which refuses it) and must not
+# fail the run; the manifest still comes back for the flash phases.
+printf '{"build":[],"force":false}\n' > /tmp/rp-empty.$$
+: > "$rlog"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp-empty.$$ \
+    --manifest "$rman" > /tmp/rb-empty.$$ 2>&1; rc=$?
+expect_rc "an empty plan does not fail the run"      0 "$rc"
+expect_absent "an empty plan is not handed to build.sh" "$rlog" 'build.sh --plan'
+expect_contains "the manifest is still fetched"       "$rlog" 'manifest.json'
+rm -f /tmp/rp-empty.$$ /tmp/rb-empty.$$
+
 # The rootfs moves compressed and sparse -- a seventh of the raw bytes -- and
 # never as a plain copy of the raw image.
 expect_contains "the rootfs is fetched compressed"    "$rlog" 'zstd -c'
@@ -709,11 +722,14 @@ exit 0
 FS
 chmod +x /tmp/fake-ssh.$$
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\n' > /tmp/pr-fm.$$
+# A manifest with nothing in it, so there is something to build: a complete
+# one yields an empty plan, and an empty plan is not sent to the worker.
+printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-fm.$$
 : > "$rlog"; : > "$HW_LOG"
 BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
     VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
     timeout 60 "$PROV" --probe-file /tmp/pr-fm.$$ --phase verify \
-    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/fm.$$ 2>&1; rc=$?
+    --manifest /tmp/m-fm.$$ > /tmp/fm.$$ 2>&1; rc=$?
 expect_rc "full mode needs no flag to say what to do" 0 "$rc"
 expect_contains "BUILD_HOST builds on the worker first" "$rlog" 'build.sh --plan'
 expect_contains "and then runs the phases"              /tmp/fm.$$ 'verify:'

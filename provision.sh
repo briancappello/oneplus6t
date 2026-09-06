@@ -137,8 +137,16 @@ remote_build() {
 
     "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./check-env.sh build" \
         || die "$host is missing build prerequisites"
-    "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./build.sh --plan /tmp/plan.json" \
-        || die "the build failed on $host"
+    # An empty plan is a valid answer -- the phone already has everything --
+    # and build.sh rightly refuses to be handed one. Skip the build, not the
+    # run: the manifest and images still come back so the flash phases can
+    # decide from them.
+    if [ -n "$(PLAN="$plan" python3 -c 'import json,os; print(" ".join(json.load(open(os.environ["PLAN"])).get("build", [])))')" ]; then
+        "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./build.sh --plan /tmp/plan.json" \
+            || die "the build failed on $host"
+    else
+        echo ">>> nothing to build on $host; fetching what it has"
+    fi
 
     # Bring back the manifest first: if it is absent the build produced nothing
     # trustworthy and flashing must not proceed.
