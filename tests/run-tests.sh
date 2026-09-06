@@ -268,6 +268,15 @@ printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-empty.$$
     > /tmp/pl-empty.$$ 2>/dev/null
 expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
 
+# FORCE=1 asks for everything with force set, so a source change behind a
+# complete manifest can be rebuilt through the same seam. Without it the plan
+# is empty, build.sh refuses an empty plan, and the remote build just dies.
+FORCE=1 "$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
+    > /tmp/pl-force.$$ 2>/dev/null
+expect_contains "FORCE=1 requests every target"  /tmp/pl-force.$$ 'rootfs'
+expect_contains "FORCE=1 sets force in the plan" /tmp/pl-force.$$ '"force": true'
+rm -f /tmp/pl-force.$$
+
 # The round trip. provision.sh decides from device evidence and emits a plan;
 # build.sh consumes exactly that file. These two agreed only on paper until the
 # manifest they share was made a single contract, so the seam is worth pinning.
