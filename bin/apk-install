@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# apk-install — install an APKMirror bundle (.apkm) or a plain .apk onto the
+# Android device on USB.
+#
+#   bin/apk-install com.example.app_1.2.3_apkmirror.com.apkm
+#   bin/apk-install some-app.apk
+#   bin/apk-install --dry-run app.apkm      # show what would be installed
+#
+# WHY this exists: `adb install foo.apkm` fails. An .apkm is a zip of split
+# APKs -- base plus one split per CPU ABI plus one per screen density -- and
+# the device needs base + exactly its own ABI split + exactly its own density
+# split, passed together to `adb install-multiple`. Pick the wrong density and
+# the app installs but every icon is blurry; pick the wrong ABI and it refuses
+# to launch. Both are read off the device here rather than guessed.
+#
+# Density is the subtle one. `wm density` reports a physical dpi (450 on the
+# OnePlus 6T) that is NOT a bucket name. Android rounds it to the nearest
+# bucket, and the split names use the bucket, so this script does the same
+# rounding. Getting that wrong is the difference between xhdpi and xxhdpi.
+
+set -euo pipefail
+
+usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+DRY_RUN=0
+case "${1:-}" in
+    -h|--help|"") usage ;;
+    --dry-run) DRY_RUN=1; shift ;;
+esac
+FILE="${1:?usage: apk-install [--dry-run] <file.apkm|file.apk>}"
+[ -f "$FILE" ] || { echo "apk-install: no such file: $FILE" >&2; exit 1; }
+
+# ------------------------------------------------------------------ device
+
+# Exactly one authorised device. "unauthorized" means the RSA prompt is on the
+# phone's screen; "offline"/"recovery"/"sideload" are not places apps install.
+devices="$(adb devices | awk 'NR>1 && NF{print $1" "$2}')"
+n="$(printf '%s\n' "$devices" | grep -c . || true)"
+[ "$n" -eq 1 ] || {
+    echo "apk-install: need exactly one device, found $n:" >&2
+    printf '  %s\n' "$devices" >&2
+    exit 1
+}
+state="$(printf '%s' "$devices" | awk '{print $2}')"
+[ "$state" = device ] || {
+    echo "apk-install: device is '$state', not ready." >&2
+    [ "$state" = unauthorized ] && echo "  Accept the USB debugging prompt on the phone." >&2
+    exit 1
+}
+
+abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+dpi="$(adb shell wm density | tr -d '\r' | sed -n 's/^Physical density: *//p')"
+[ -n "$abi" ] && [ -n "$dpi" ] || { echo "apk-install: could not read abi/density from device" >&2; exit 1; }
+
+# Split APKs name the ABI with underscores (arm64_v8a) while the device reports
+# hyphens (arm64-v8a).
+abi_split="${abi//-/_}"
+
+# Nearest density bucket, the way Android's resource resolver rounds it.
+# Boundaries are the midpoints between adjacent buckets.
+bucket_for() {
+    local d=$1
+    if   [ "$d" -lt 140 ]; then echo ldpi
+    elif [ "$d" -lt 200 ]; then echo mdpi
+    elif [ "$d" -lt 227 ]; then echo tvdpi
+    elif [ "$d" -lt 280 ]; then echo hdpi
+    elif [ "$d" -lt 400 ]; then echo xhdpi
+    elif [ "$d" -lt 560 ]; then echo xxhdpi
+    else                        echo xxxhdpi
+    fi
+}
+bucket="$(bucket_for "$dpi")"
+
+echo ">>> device: $abi, ${dpi}dpi -> $bucket"
+
+# ------------------------------------------------------------------ files
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+case "$FILE" in
+    *.apk)
+        parts=("$FILE")
+        ;;
+    *.apkm|*.apks|*.xapk)
+        unzip -q -o "$FILE" -d "$tmp"
+        base="$(find "$tmp" -maxdepth 2 -name base.apk | head -1)"
+        [ -n "$base" ] || { echo "apk-install: no base.apk inside $FILE" >&2; exit 1; }
+        dir="$(dirname "$base")"
+        parts=("$base")
+
+        # A missing ABI split is fatal: the app will not run. A missing density
+        # split is not: the app falls back to whatever density resources base
+        # carries. Say which case it is rather than silently producing a
+        # half-working install.
+        abi_apk="$dir/split_config.${abi_split}.apk"
+        if [ -f "$abi_apk" ]; then
+            parts+=("$abi_apk")
+        elif ls "$dir"/split_config.*_v*.apk "$dir"/split_config.x86*.apk >/dev/null 2>&1; then
+            echo "apk-install: bundle has no $abi_split split; it has:" >&2
+            ls "$dir"/split_config.*.apk | xargs -n1 basename | grep -E '_v|x86' | sed 's/^/  /' >&2
+            exit 1
+        fi
+
+        dpi_apk="$dir/split_config.${bucket}.apk"
+        if [ -f "$dpi_apk" ]; then
+            parts+=("$dpi_apk")
+        else
+            echo "    (no $bucket split in bundle; using base resources)"
+        fi
+
+        # Any other splits (language packs, feature modules) that are not
+        # ABI or density go in too -- they are cheap and leaving one out is a
+        # missing-feature bug that only shows up in use.
+        for s in "$dir"/split_config.*.apk "$dir"/split_*.apk; do
+            [ -f "$s" ] || continue
+            case "$(basename "$s")" in
+                split_config.*_v*.apk|split_config.x86*.apk) ;;                     # other ABIs
+                split_config.*dpi.apk) ;;                                            # other densities
+                *) parts+=("$s") ;;
+            esac
+        done
+        ;;
+    *)
+        echo "apk-install: unrecognised extension: $FILE" >&2; exit 1 ;;
+esac
+
+# Dedupe while preserving order (a split could match two globs above).
+declare -A seen; uniq_parts=()
+for p in "${parts[@]}"; do [ -n "${seen[$p]:-}" ] || { seen[$p]=1; uniq_parts+=("$p"); }; done
+parts=("${uniq_parts[@]}")
+
+echo ">>> installing $(basename "$FILE"):"
+for p in "${parts[@]}"; do printf '    %-40s %10s bytes\n' "$(basename "$p")" "$(stat -c%s "$p")"; done
+
+[ "$DRY_RUN" -eq 0 ] || { echo ">>> dry run, nothing installed"; exit 0; }
+
+# -r: reinstall/upgrade in place, keeping app data.
+if [ "${#parts[@]}" -eq 1 ]; then
+    adb install -r "${parts[0]}"
+else
+    adb install-multiple -r "${parts[@]}"
+fi
+
+# ------------------------------------------------------------------ verify
+
+# Confirm from the device, not from adb's exit code. Ask the package manager
+# which package owns the base.apk that was just installed: `pm list packages
+# -f` maps every package to its APK path, and the freshly installed base has
+# a size we know exactly. No manifest parsing -- the binary XML's string
+# table is not something a regex can read reliably (tried; it returned an
+# analytics SDK's content provider).
+#
+# Note the `pm` output is captured to a variable BEFORE the loop. adb calls
+# inside a `while read` consume the loop's own stdin, which is how the first
+# version of this silently found nothing.
+want="$(stat -c%s "${parts[0]}")"
+listing="$(adb shell pm list packages -f -3 2>/dev/null | tr -d '\r')"
+pkg=""
+while IFS= read -r line; do
+    # format: package:/data/app/.../base.apk=com.example.app
+    path="${line#package:}"; path="${path%=*}"; name="${line##*=}"
+    got="$(adb shell stat -c%s "$path" 2>/dev/null </dev/null | tr -d '\r')"
+    [ "$got" = "$want" ] && { pkg="$name"; break; }
+done <<< "$listing"
+
+if [ -n "$pkg" ]; then
+
+    echo ">>> installed: $pkg"
+    adb shell dumpsys package "$pkg" 2>/dev/null | tr -d '\r' \
+        | grep -E '^\s+(versionName|splits)=' | sed 's/^\s*/    /'
+    launch="$(adb shell cmd package resolve-activity --brief "$pkg" 2>/dev/null | tr -d '\r' | tail -1)"
+    [ -n "$launch" ] && echo "    launch: adb shell am start -n $launch"
+else
+    echo ">>> adb reported success but could not confirm package '${pkg:-?}' on device" >&2
+    exit 1
+fi

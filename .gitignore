@@ -1,4 +1,7 @@
 
+*.apk
+*.apkm
+*.apks
 # a stale one committed here is actively misleading.
 # at the repo root, where provision.sh reads it. All of it is reproducible from
 # Build output. build.sh writes artifacts under the paths below and the manifest
@@ -47,3 +50,4 @@ releases/
 # Unrelated postmarketOS images that happen to live in this directory
 .venv/
 .work/
+*.xapk
