@@ -157,6 +157,14 @@ phase_sync() {
     check_disk
     seed_home
 
+    # Clear stale local manifests BEFORE init. `repo init` parses whatever is
+    # already in .repo/local_manifests, so a malformed one left by a previous
+    # failed run blocks init itself -- before the cp below could ever replace
+    # it. That wedges the tree permanently and the error names a line number in
+    # a file you are looking at in its fixed form. This is the only ordering
+    # that lets a bad manifest be recovered from by re-running.
+    rm -rf "$WORK/.repo/local_manifests"
+
     echo ">>> repo init: manifest $MANIFEST_REV, repo $REPO_REV"
     # Deliberately NOT --depth=1. repo propagates the manifest depth to every
     # project fetch, and a shallow fetch can only resolve a revision that is
