@@ -268,10 +268,19 @@ phase_sync() {
     # The missing CTS modules are handled where they belong, with
     # ALLOW_MISSING_DEPENDENCIES in phase_build, rather than by removing
     # projects that carry real build dependencies alongside test code.
+    # --groups=default is passed EXPLICITLY and must stay that way. `repo init`
+    # persists the previous run's --groups in .repo/manifests.git/config; simply
+    # omitting the flag does NOT restore the default, it silently keeps whatever
+    # was set before. After dropping an earlier --groups=default,-cts the config
+    # still read "default,-cts,platform-linux", the excluded projects stayed
+    # deleted, and the build failed again in exactly the same way -- with a
+    # script that no longer contained the cause. Being explicit makes the tree's
+    # group set a function of this file rather than of init history.
     in_container "repo init \
         -u '$MANIFEST_URL' \
         -b '$MANIFEST_REV' \
         --repo-rev='$REPO_REV' \
+        --groups='default' \
         --no-clone-bundle"
 
     # The local manifest must be in place BEFORE the sync, or the device,
