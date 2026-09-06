@@ -154,6 +154,27 @@ progress_ticker() {
     done
 }
 
+# Refuse to start when this tree already has a run in progress.
+#
+# Two concurrent runs do NOT fail cleanly. The second one's soong waits 10s for
+# out/.lock, gives up, and prints "failed to build some targets (10 seconds)"
+# -- while the first keeps going. And because both are launched with
+# `> ~/lineage20-build.log`, the second TRUNCATES the log the first is still
+# writing to, so the surviving build becomes invisible: no progress, no error
+# count, nothing. Diagnosing that from the outside is near impossible, which is
+# exactly what happened.
+guard_single_instance() {
+    local running
+    running="$("$RT" ps --filter "ancestor=$IMAGE_TAG" --format '{{.ID}} {{.Status}}' 2>/dev/null | head -1)"
+    [ -n "$running" ] || return 0
+    echo "build-lineage.sh: a run is already using $WORK ($running)." >&2
+    echo "  Two soong processes collide on out/.lock and the second dies in 10s," >&2
+    echo "  and its log redirect truncates the log the first is still writing." >&2
+    echo "  Stop the existing run first:" >&2
+    echo "    pkill -f lineage/build-lineage.sh && $RT rm -f -a" >&2
+    exit 1
+}
+
 # ---------------------------------------------------------------- preflight
 
 # A LineageOS 20 tree plus out/ and ccache is ~300 GB. Finding that out four
@@ -414,8 +435,8 @@ phase_build() {
 case "${1:-all}" in
     image)  phase_image ;;
     doctor) phase_doctor ;;
-    sync)   phase_sync ;;
-    build)  phase_build ;;
-    all)    phase_image; phase_doctor; phase_sync; phase_build ;;
+    sync)   guard_single_instance; phase_sync ;;
+    build)  guard_single_instance; phase_build ;;
+    all)    guard_single_instance; phase_image; phase_doctor; phase_sync; phase_build ;;
     *) echo "usage: build-lineage.sh [image|doctor|sync|build|all]" >&2; exit 1 ;;
 esac

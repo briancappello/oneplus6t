@@ -29,6 +29,8 @@ set -uo pipefail
 LOG="${1:-$HOME/lineage20-build.log}"
 INTERVAL="${INTERVAL:-15}"
 MAX_MINUTES="${MAX_MINUTES:-30}"
+HEARTBEAT="${HEARTBEAT:-60}"
+IMAGE_TAG="${IMAGE_TAG:-lineage20-build:fajita}"
 
 RT="$(command -v podman >/dev/null && echo podman || echo docker)"
 
@@ -45,6 +47,11 @@ build_region() {
 
 progress() { build_region | grep -aoE '\[ *[0-9]+% [0-9]+/[0-9]+\]' | tail -1; }
 
+# Before ninja starts emitting percentages there is nothing for progress() to
+# find, and a heartbeat of empty strings is no better than silence. Fall back to
+# the script's own phase markers so sync and setup are visible too.
+phase_line() { tr '\r' '\n' < "$LOG" 2>/dev/null | grep -aE '^>>> ' | tail -1; }
+
 report_outcome() {
     if build_region | grep -qa 'build completed successfully'; then
         echo "RESULT: SUCCESS"
@@ -59,18 +66,39 @@ report_outcome() {
 }
 
 deadline=$(( $(date +%s) + MAX_MINUTES * 60 ))
+started=$(date +%s)
+next_beat=0
 while :; do
+    # Say something on a healthy build. Reporting only on failure, completion or
+    # timeout meant a working build and a wedged one looked identical: total
+    # silence for the whole window. A flat target count across beats is now a
+    # visible stall rather than an indistinguishable one.
+    now=$(date +%s)
+    if [ "$now" -ge "$next_beat" ]; then
+        printf '    [%3dm] %s %s\n' \
+            "$(( (now - started) / 60 ))" \
+            "$(progress || true)" \
+            "$(phase_line || true)"
+        next_beat=$(( now + HEARTBEAT ))
+    fi
     # Report a failure the moment it appears, not when the container finally
     # exits. ninja keeps scheduling the targets already queued after a target
     # fails, so a build can run for a long time -- and print thousands more
     # progress lines -- after the failure that doomed it. Waiting for the
     # container to stop meant sitting through all of that in silence.
-    if build_region | grep -qaE '^FAILED:|^ninja: build stopped'; then
+    # "Tried to lock out/.lock" is included deliberately: it means a SECOND run
+    # collided with one already in progress, which is not a build error and is
+    # invisible in the log otherwise. "#### failed to build some targets" is
+    # deliberately NOT matched -- lunch's internal dumpvars pass prints it on
+    # perfectly healthy runs, which is what produced a false failure before.
+    if build_region | grep -qaE '^FAILED:|^ninja: build stopped|Tried to lock out/\.lock'; then
         echo "=== FAILED at $(progress) ==="
-        build_region | grep -aE '^FAILED:|missing dependencies|EAGAIN|OutOfMemoryError|errno=11|^ninja: build stopped' | head -10
+        build_region | grep -aE '^FAILED:|missing dependencies|EAGAIN|OutOfMemoryError|errno=11|^ninja: build stopped|Tried to lock' | head -10
         exit 1
     fi
-    if [ -z "$("$RT" ps -q 2>/dev/null)" ]; then
+    # Filtered to OUR image: a plain `podman ps -q` counts any container on the
+    # box, so an unrelated one makes a dead build look alive.
+    if [ -z "$("$RT" ps --filter "ancestor=$IMAGE_TAG" -q 2>/dev/null)" ]; then
         echo "=== work stopped, $(progress) ==="
         report_outcome
         exit $?
