@@ -108,6 +108,25 @@ in_container() {
         /bin/bash -euo pipefail -c "$1"
 }
 
+# Heartbeat for the long phases. Prints one line a minute so a log tail shows
+# forward motion, and so a stall is visible as a flat GB column rather than as
+# silence that looks identical to healthy work.
+#
+# `df` is O(1); `du` on a 200 GB tree is not, and running it every minute would
+# generate more I/O than the sync it is reporting on. Project count comes from
+# .repo/projects, which repo populates as each project completes.
+progress_ticker() {
+    local start_mb now_mb mins=0 gb projects
+    start_mb=$(df -BM --output=avail "$WORK" | tail -1 | tr -dc '0-9')
+    while sleep 60; do
+        mins=$((mins + 1))
+        now_mb=$(df -BM --output=avail "$WORK" | tail -1 | tr -dc '0-9')
+        gb=$(( (start_mb - now_mb) / 1024 ))
+        projects=$(find "$WORK/.repo/projects" -maxdepth 4 -name '*.git' 2>/dev/null | wc -l)
+        printf '    [%3dm] %4d GB fetched, %4d projects done\n' "$mins" "$gb" "$projects"
+    done
+}
+
 # ---------------------------------------------------------------- preflight
 
 # A LineageOS 20 tree plus out/ and ccache is ~300 GB. Finding that out four
@@ -238,12 +257,26 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
     echo ">>> installed local manifest ($(grep -c '<project' "$HERE/local_manifest.xml") pinned projects)"
 
     echo ">>> repo sync -j$SYNC_JOBS (hours, ~200 GB)"
+    # repo calls isatty() and suppresses its progress bar completely when stdout
+    # is a file -- which is exactly what the `setsid nohup ... > log` launch this
+    # script is designed for produces. So a multi-hour sync prints NOTHING and is
+    # indistinguishable from a hang. Emit our own heartbeat instead.
+    #
+    # Progress is measured with df, not du: du has to walk a tree heading for
+    # 200 GB and would cost more I/O than the thing it is reporting on.
+    progress_ticker &
+    local ticker=$!
+    trap 'kill "$ticker" 2>/dev/null || true' EXIT
     # -c            only the branch we pinned, not every branch upstream has
     # --no-tags     tags are worth tens of GB across ~1000 repos and we pin SHAs
     # --force-sync  lets a repo whose path changed upstream re-checkout instead
     #               of wedging the whole sync
+    local rc=0
     in_container "repo sync -j$SYNC_JOBS -c --no-tags --no-clone-bundle \
-        --force-sync --fail-fast"
+        --force-sync --fail-fast" || rc=$?
+    kill "$ticker" 2>/dev/null || true
+    trap - EXIT
+    [ "$rc" -eq 0 ] || { echo "build-lineage.sh: repo sync failed (rc=$rc)" >&2; exit "$rc"; }
 
     echo ">>> sync complete"
     in_container 'for d in device/oneplus/fajita device/oneplus/sdm845-common \
