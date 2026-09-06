@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# Prepare a flashable Droidian userdata image for the OnePlus 6T (fajita).
+# Prepare a flashable Droidian data image for the OnePlus 6T (fajita).
 #
 #   ./droidian/build-rootfs.sh
 #
-# Produces droidian/userdata.img: an ext4 filesystem containing Droidian's
-# rootfs.img, ready for `fastboot flash userdata`.
+# Produces droidian/linuxroot.img: an ext4 filesystem containing Droidian's
+# rootfs.img, ready for `fastboot flash linuxroot`. Android keeps `userdata`;
+# the kernel cmdline (datapart=, see packaging/debian/kernel-info.mk) points
+# the halium initramfs at linuxroot instead.
 #
 # Droidian does NOT flash a rootfs partition. Its installer (setup.sh inside
 # the release zip) drops rootfs.img as a FILE into /data, resizes it, and
 # loop-mounts it. The official flow does that from TWRP. We build the same
 # layout offline instead, so no recovery and no manual steps are needed.
 #
-# HARD REQUIREMENT: the userdata filesystem must have a journal.
+# HARD REQUIREMENT: the data filesystem must have a journal.
 # The halium initramfs mounts /data with `data=journal`. Building the image
 # with `-O ^has_journal` makes that remount fail:
 #
@@ -37,8 +39,8 @@ ROOTFS_SIZE="${ROOTFS_SIZE:-8G}"        # setup.sh resizes to 8G when there is
 IMG_BLOCKS="${IMG_BLOCKS:-2359296}"     # 9 GiB of 4 KiB blocks; must exceed
                                         # ROOTFS_SIZE plus fs overhead
 STAGE="$HERE/stage"
-OUT="$HERE/userdata.img"
-SPARSE="$HERE/userdata.simg"
+OUT="$HERE/linuxroot.img"
+SPARSE="$HERE/linuxroot.simg"
 
 say() { printf '\n>>> %s\n' "$*"; }
 
@@ -176,7 +178,11 @@ fusermount3 -u /mnt/rootfs
 fi
 
 # ---------------------------------------------------------------- pack
-say "building userdata.img (WITH journal - see comment at top)"
+# The image is 9 GiB inside a 114 GiB partition. The halium initramfs grows
+# the filesystem to the partition on first boot (resize_userdata_if_needed in
+# scripts/halium) -- but only for /dev/mmcblk* and /dev/disk* paths, which is
+# why the cmdline names the partition as /dev/disk/by-partlabel/linuxroot.
+say "building linuxroot.img (WITH journal - see comment at top)"
 rm -f "$OUT"
 mke2fs -t ext4 -L data -d "$STAGE" -b 4096 -m 0 "$OUT" "$IMG_BLOCKS" 2>&1 | tail -2
 

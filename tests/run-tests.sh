@@ -132,16 +132,16 @@ python3 -c "
 import json
 d = json.load(open('$manifest'))
 a = d.get('artifacts', {})
-u = a.get('droidian/userdata.img', {})
+u = a.get('droidian/linuxroot.img', {})
 c = a.get('droidian/out-camera', {})
-print('userdata_target=' + str(u.get('target')))
-print('userdata_commit=' + str(bool(u.get('source_commit'))))
-print('userdata_sha=' + str(bool(u.get('sha256'))))
+print('rootfs_target=' + str(u.get('target')))
+print('rootfs_commit=' + str(bool(u.get('source_commit'))))
+print('rootfs_sha=' + str(bool(u.get('sha256'))))
 print('dep_kept=' + str(c.get('target')))
 " > /tmp/b-man.$$ 2>&1
-expect_contains "manifest keys artifacts by output path" /tmp/b-man.$$ 'userdata_target=rootfs'
-expect_contains "manifest records a source commit"       /tmp/b-man.$$ 'userdata_commit=True'
-expect_contains "manifest records a sha256"              /tmp/b-man.$$ 'userdata_sha=True'
+expect_contains "manifest keys artifacts by output path" /tmp/b-man.$$ 'rootfs_target=rootfs'
+expect_contains "manifest records a source commit"       /tmp/b-man.$$ 'rootfs_commit=True'
+expect_contains "manifest records a sha256"              /tmp/b-man.$$ 'rootfs_sha=True'
 # rootfs pulls in camera and adaptation; every target built this run must
 # survive in the manifest, which a per-target file would not have done.
 expect_contains "manifest keeps all targets from one run" /tmp/b-man.$$ 'dep_kept=camera'
@@ -375,13 +375,13 @@ expect_rc "boot phase exits 0" 0 "$rc"
 expect_contains "boot phase flashes boot" /tmp/p-flash-boot.$$ 'boot: flashing'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
 
-# Flash phases: data phase flashes userdata
+# Flash phases: data phase flashes linuxroot
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-flash-data.$$
 mkdir -p /tmp/artifacts-test/droidian
-touch /tmp/artifacts-test/droidian/userdata.simg
+touch /tmp/artifacts-test/droidian/linuxroot.simg
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
 expect_rc "data phase exits 0" 0 "$rc"
-expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: installing rootfs'
+expect_contains "data phase flashes linuxroot" /tmp/p-flash-data.$$ 'data: installing rootfs'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
 
 # Matching package versions are not a reason to skip while the install is
@@ -401,7 +401,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\n
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/userdata.simg
+touch /tmp/artifacts-test/droidian/linuxroot.simg
 : > "$HW_LOG"
 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
 timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
@@ -409,7 +409,8 @@ expect_rc "--artifacts mode exits 0" 0 "$rc"
 # rc=124 would mean a phase blocked waiting for a device. Bounded so that a
 # regression fails the suite instead of hanging it.
 expect_contains "the boot flash names the slot" "$HW_LOG" 'fastboot flash boot_a'
-expect_contains "the userdata flash is issued" "$HW_LOG" 'fastboot flash userdata'
+expect_contains "the linuxroot flash is issued" "$HW_LOG" 'fastboot flash linuxroot'
+expect_absent   "userdata is never flashed"       "$HW_LOG" 'fastboot flash userdata'
 expect_contains "--artifacts echoes the path" /tmp/p-art.$$ '/tmp/artifacts-test'
 expect_contains "edl phase runs" /tmp/p-art.$$ 'edl:'
 expect_contains "boot phase runs" /tmp/p-art.$$ 'boot:'
@@ -511,7 +512,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=n
 mkdir -p /tmp/artifacts-test/droidian/out/images /tmp/artifacts-test/msm
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/userdata.simg
+touch /tmp/artifacts-test/droidian/linuxroot.simg
 touch /tmp/artifacts-test/msm/gpt_main0.bin
 
 : > "$HW_LOG"
@@ -588,8 +589,8 @@ expect_absent  "a supplied plan probes no device" "$HW_LOG" 'device-ssh'
 # The rootfs moves compressed and sparse -- a seventh of the raw bytes -- and
 # never as a plain copy of the raw image.
 expect_contains "the rootfs is fetched compressed"    "$rlog" 'zstd -c'
-expect_contains "and in its sparse form"              "$rlog" 'userdata.simg'
-expect_absent  "the raw image is never copied over"   "$rlog" 'userdata.img'
+expect_contains "and in its sparse form"              "$rlog" 'linuxroot.simg'
+expect_absent  "the raw image is never copied over"   "$rlog" 'linuxroot.img'
 
 # A transfer that arrives with the wrong bytes must never reach the phone. This
 # is the one artifact big enough that a silent truncation is plausible, and a
@@ -608,7 +609,7 @@ PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
 expect_rc "a corrupt rootfs transfer fails the run" 1 "$rc"
 expect_contains "and says the hash disagreed" /tmp/rb3.$$ 'arrived corrupt'
 expect_absent  "and nothing is flashed"       "$HW_LOG" 'fastboot flash'
-[ -e "$fetchroot/droidian/userdata.simg.part" ] \
+[ -e "$fetchroot/droidian/linuxroot.simg.part" ] \
     && { echo "  FAIL  a failed transfer leaves no .part behind"; fail=$((fail+1)); } \
     || { echo "  PASS  a failed transfer leaves no .part behind"; pass=$((pass+1)); }
 rm -f /tmp/rb3.$$

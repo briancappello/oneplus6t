@@ -147,7 +147,7 @@ remote_build() {
     done
 }
 
-ROOTFS_IMG="droidian/userdata.simg"
+ROOTFS_IMG="droidian/linuxroot.simg"
 
 # manifest_field <path> <field> — one recorded property of one artifact.
 manifest_field() {
@@ -387,14 +387,16 @@ if [ "$MODE" = artifacts ]; then
     # Phase 3: data - install rootfs (destructive)
     if [ "$run_data" = yes ]; then
         echo "    data: installing rootfs"
-        userdata_img="$ARTIFACTS/$ROOTFS_IMG"
+        rootfs_img="$ARTIFACTS/$ROOTFS_IMG"
         # Only fetched once it is known to be needed, so a run that skips this
         # phase does not move gigabytes to decide it had nothing to do.
-        [ -f "$userdata_img" ] || [ -z "${BUILD_HOST:-}" ] || fetch_rootfs "$BUILD_HOST"
-        [ -f "$userdata_img" ] || die "rootfs image not found: $userdata_img"
-        echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB sparse)"
-        fastboot flash userdata "$userdata_img" || die "failed to flash userdata"
-        echo "    data: flashed userdata"
+        [ -f "$rootfs_img" ] || [ -z "${BUILD_HOST:-}" ] || fetch_rootfs "$BUILD_HOST"
+        [ -f "$rootfs_img" ] || die "rootfs image not found: $rootfs_img"
+        # linuxroot, never userdata: userdata is Android's /data, and the
+        # kernel cmdline (datapart=) points the halium initramfs here.
+        echo "    data: flashing linuxroot (~$(( $(stat -c%s "$rootfs_img") / 1000000 )) MB sparse)"
+        fastboot flash linuxroot "$rootfs_img" || die "failed to flash linuxroot"
+        echo "    data: flashed linuxroot"
     elif wanted data; then
         echo "    data: skipped (already correct)"
     fi

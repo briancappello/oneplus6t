@@ -5,7 +5,7 @@
 #   ./droidian/flash.sh
 #
 # Expects droidian/out/images/{boot,vbmeta}.img from build-kernel.sh and
-# droidian/userdata.img from build-rootfs.sh.
+# droidian/linuxroot.img from build-rootfs.sh.
 #
 # Prerequisite: stock OxygenOS 9.0.17 must already be installed
 # (RELEASE=oos9 restore-android.py). Droidian does not replace the Android
@@ -23,7 +23,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOT="$HERE/out/images/boot.img"
 VBMETA="$HERE/out/images/vbmeta.img"
-USERDATA="$HERE/userdata.img"
+ROOTFS="$HERE/linuxroot.img"
 
 for f in "$BOOT" "$VBMETA" "$USERDATA"; do
     [ -f "$f" ] || { echo "missing $f -- run build-kernel.sh / build-rootfs.sh" >&2; exit 1; }
@@ -39,13 +39,13 @@ slot="$(fastboot getvar current-slot 2>&1 | sed -n 's/^current-slot: *//p' | tr 
 [ -n "$slot" ] || slot=a
 echo "    current slot: $slot"
 
-# Guard: a half-written userdata is indistinguishable from a bad image when it
+# Guard: a half-written linuxroot is indistinguishable from a bad image when it
 # fails to boot, and this flash takes ~2 minutes. Warn plainly.
-say "flashing (do not interrupt; userdata is ~$(( $(stat -c%s "$USERDATA") / 1000000 )) MB)"
+say "flashing (do not interrupt; linuxroot is ~$(( $(stat -c%s "$ROOTFS") / 1000000 )) MB)"
 
 fastboot flash "boot_$slot"   "$BOOT"
 fastboot flash "vbmeta_$slot" "$VBMETA"
-fastboot flash userdata       "$USERDATA"
+fastboot flash linuxroot      "$ROOTFS"
 
 say "rebooting"
 fastboot reboot

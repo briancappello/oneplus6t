@@ -6,11 +6,11 @@
       "target": "kernel", "version": "", "sha256": "aaaa",
       "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"
     },
-    "droidian/userdata.img": {
+    "droidian/linuxroot.img": {
       "target": "rootfs", "version": "", "sha256": "bbbb",
       "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"
     },
-    "droidian/userdata.simg": {
+    "droidian/linuxroot.simg": {
       "target": "rootfs", "version": "",
       "sha256": "a79029d1e6689be1648d4bee1e69aaf70fee91c1d9aee2d613f36033e842908b",
       "bytes": 22, "repo_commit": "cafe123", "source_commit": "cafe123"
