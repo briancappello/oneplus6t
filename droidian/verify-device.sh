@@ -63,12 +63,14 @@ echo "stale=$([ -e /etc/udev/rules.d/70-halium-hostdev-perms.rules ] && echo yes
 echo "epoch=$(date -u +%s)"
 echo "clockfloor=$(systemctl is-active adaptation-clock-floor.service 2>/dev/null)"
 # Droidian owns linuxroot; Android owns userdata. The initramfs is pointed at
-# linuxroot by datapart= on the cmdline, and it grows the filesystem to the
-# partition when the gap exceeds 10000 1k-blocks -- so a gap under 2500
-# 4k-blocks here is the evidence that it did.
+# linuxroot by datapart= on the cmdline and grows the filesystem to the
+# partition on first boot. datafill is the filesystem as a percentage of the
+# partition, from stat -f (the rootfs has no e2fsprogs, so no dumpe2fs). The
+# image is built at 9 GiB in a 114 GiB partition, so anything above 95 means
+# the grow happened; an ungrown image reads 7.
 DP=$(findmnt -no SOURCE /userdata 2>/dev/null)
 echo "datapart=$(lsblk -no PARTLABEL "$DP" 2>/dev/null)"
-echo "datafill=$(( $(blockdev --getsize64 "$DP" 2>/dev/null || echo 0) / 4096 - $(dumpe2fs -h "$DP" 2>/dev/null | awk "/^Block count/{print \$3}") ))"
+echo "datafill=$(( $(stat -f -c "%b * %S" /userdata 2>/dev/null || echo 0) * 100 / $(blockdev --getsize64 "$DP" 2>/dev/null || echo 1) ))"
 echo "udmounts=$(findmnt -no TARGET /dev/disk/by-partlabel/userdata 2>/dev/null | wc -l)"
 # systemd resolves an ordering cycle by deleting one job silently. The victim
 # then looks identical to a unit that ran and did nothing, so check explicitly.
@@ -123,7 +125,7 @@ ck "chre never ran"               '[ -z "$(val chre)" ]'
 ck "fastrpc kernel invoke bounded" '[ "$(val fastrpcto)" = 5000 ]'
 ck "clock never jumped backwards" '[ "$(val timewarp)" = 0 ]'
 ck "droidian data is on linuxroot" '[ "$(val datapart)" = linuxroot ]'
-ck "data fs fills linuxroot"       '[ "$(val datafill)" -lt 2500 ] 2>/dev/null'
+ck "data fs fills linuxroot"       '[ "$(val datafill)" -ge 95 ] 2>/dev/null'
 ck "userdata is left to Android"   '[ "$(val udmounts)" = 0 ]'
 [ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit $fail
