@@ -230,8 +230,10 @@ phase_sync() {
     # needs real history in kernel/oneplus/sdm845 to rebase Halium patches
     # onto. -c and --no-tags below recover most of the space without that
     # fragility, and the disk guard already proved we have the headroom.
-    # No --git-lfs: it is a boolean flag, not key=value ("--git-lfs option does
-    # not take a value"), and LineageOS 20 has no LFS objects to fetch anyway.
+    # No --git-lfs flag: it is a boolean, not key=value ("--git-lfs option does
+    # not take a value"). LFS itself is very much needed -- the chromium-webview
+    # prebuilts are LFS objects -- but it is enabled by having the git-lfs binary
+    # in the image, which the Containerfile installs, not by this flag.
     in_container "repo init \
         -u '$MANIFEST_URL' \
         -b '$MANIFEST_REV' \
