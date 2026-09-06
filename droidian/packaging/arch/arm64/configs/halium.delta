@@ -43,26 +43,25 @@ CONFIG_EXT4_FS_POSIX_ACL=y
 CONFIG_KEYS=y
 CONFIG_ENCRYPTED_KEYS=y
 
-# ---- security: AppArmor is the compiled-in default LSM -------------------
-# It MUST be the default here rather than selected on the cmdline: with the
-# LineageOS 20 dtbo on the slot, a cmdline carrying the apparmor selection
-# tokens never reaches the kernel (see kernel-info.mk). SELinux stays
-# compiled in (the vendor's init expects the LSM to exist) but is not the
-# default and is switchable off from the cmdline.
-CONFIG_SECURITY_APPARMOR=y
-CONFIG_SECURITY_APPARMOR_HASH=y
-CONFIG_SECURITY_APPARMOR_BOOTPARAM_VALUE=1
-CONFIG_DEFAULT_SECURITY_APPARMOR=y
-CONFIG_DEFAULT_SECURITY="apparmor"
-CONFIG_SECURITY_SELINUX_BOOTPARAM=y
-CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE=0
-CONFIG_SECURITY_SELINUX_DISABLE=y
+# ---- security: SELinux on at boot, permissive, and otherwise LineageOS's -
+# Nothing here changes the LSM from what LineageOS ships, ON PURPOSE. With
+# the LineageOS 20 dtbo on the slot the bootloader will not hand off to a
+# kernel whose SELinux starts disabled, nor to one told to use a different
+# LSM on the cmdline. Both were bisected on hardware with LineageOS's own
+# known-good kernel: the selinux bootparam-value-0 pair alone reproduces
+# the 12-second death (test N1), as does the apparmor cmdline selection
+# (test G2). The kernel never runs, so ramoops is empty.
+#
+# So SELinux stays the default, starts enabled, and is permissive, which
+# LineageOS's config already gives us via the develop option: denials are
+# logged, never enforced. For everything Droidian does that is "off".
+# AppArmor is not compiled in: nothing in the halium initramfs, the
+# Droidian adaptation, or the rootfs needs it (grep-verified), and the old
+# build's use of it was inherited convention rather than a dependency.
+#
+# securityfs is kept for /sys/kernel/security, which systemd and lxc
+# expect to exist regardless of LSM.
 CONFIG_SECURITYFS=y
-CONFIG_SECURITY_NETWORK=y
-CONFIG_SECURITY_PATH=y
-# LineageOS defaults to SELinux as the LSM; one default only, and it is
-# AppArmor above.
-# CONFIG_DEFAULT_SECURITY_SELINUX is not set
 
 # ---- modules: halium and the adaptation ship unsigned modules --------------
 # LineageOS enforces module signatures; the old 4.9.113 build never did.

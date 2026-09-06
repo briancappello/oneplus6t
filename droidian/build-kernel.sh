@@ -79,6 +79,16 @@ fi
 git -C "$KERNEL_DIR" checkout -q "$KERNEL_COMMIT"
 [ "$(git -C "$KERNEL_DIR" rev-parse HEAD)" = "$KERNEL_COMMIT" ] \
     || { echo "kernel tree is not at $KERNEL_COMMIT" >&2; exit 1; }
+# Reset the working tree to the pin, every build. The patch loop below skips
+# a patch that is "already applied", which is right for a re-run but means
+# a patch REMOVED from packaging/patches/ stays in effect forever, because
+# nothing ever un-applies it. During a bisect that produced three builds
+# labelled "no patches" that all silently carried all six. The tree must
+# reflect exactly the current patch set, which is also what "zero
+# out-of-tree edits" means. The out/ build directory is untracked and
+# survives this, so ccache and incremental builds are unaffected.
+git -C "$KERNEL_DIR" checkout -q -- .
+git -C "$KERNEL_DIR" clean -qfd -e out -e debian
 echo ">>> kernel at $(git -C "$KERNEL_DIR" rev-parse --short HEAD) ($(git -C "$KERNEL_DIR" describe --tags --always 2>/dev/null))"
 
 echo ">>> applying fajita packaging overlay"
@@ -147,8 +157,16 @@ $(runtime) run --rm \
 cfg="$KERNEL_DIR/out/KERNEL_OBJ/.config"
 [ -f "$cfg" ] || { echo "built .config not found at $cfg" >&2; exit 1; }
 cp "$cfg" "$OUT_DIR/config-$KVER-oneplus-fajita"
-"$HERE/kernel-config-check.sh" "$HERE/packaging/arch/arm64/configs/halium.delta" \
-    "$OUT_DIR/config-$KVER-oneplus-fajita" | sed 's/^/    /'
+# SKIP_CONFIG_CHECK=1 is for bisecting a non-booting kernel by building
+# deliberately non-Halium configs (e.g. LineageOS's verbatim defconfig) to
+# find which delta line breaks the boot. Never set it for a build that
+# ships: an image that passes here without the delta will not run lxc.
+if [ -n "${SKIP_CONFIG_CHECK:-}" ]; then
+    echo "    (config check SKIPPED: SKIP_CONFIG_CHECK is set; this image is a bisect artifact)"
+else
+    "$HERE/kernel-config-check.sh" "$HERE/packaging/arch/arm64/configs/halium.delta" \
+        "$OUT_DIR/config-$KVER-oneplus-fajita" | sed 's/^/    /'
+fi
 
 echo ">>> extracting images"
 IMAGES="$OUT_DIR/images"
