@@ -338,7 +338,21 @@ phase_build() {
     #
     # Steps are chained with && because in_container runs without `set -e`
     # (see the note there); without the chain a failed lunch would still run m.
-    in_container "ccache -M ${CCACHE_GB}G >/dev/null &&
+    # ALLOW_MISSING_DEPENDENCIES=true is required, not a shortcut.
+    #
+    # LineageOS ships the test suites (cts, test/cts-root, test/mts, test/vts,
+    # test/catbox) but omits tools/tradefederation/core and test/suite_harness,
+    # so cts-tradefed and cts-shim-host-lib are defined nowhere. Excluding cts
+    # only moves the failure: cts also PROVIDES cts_defaults, which those other
+    # suites depend on, and they sit on the aosp remote with no groups attribute
+    # so they cannot be excluded by group at all.
+    #
+    # Every undefined module here is test infrastructure that a ROM build does
+    # not ship. It does NOT silently excuse a missing vendor blob or HAL: those
+    # fail on their own in packaging and in the vintf checks Phase 2 runs
+    # against the built image. Verify the image, not the absence of this flag.
+    in_container "export ALLOW_MISSING_DEPENDENCIES=true &&
+        ccache -M ${CCACHE_GB}G >/dev/null &&
         source build/envsetup.sh &&
         lunch $LUNCH_TARGET &&
         m -j$BUILD_JOBS bacon"
