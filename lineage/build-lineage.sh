@@ -448,9 +448,18 @@ phase_build() {
     # to "true" only when --developer-mode was given, and is otherwise
     # exported EMPTY rather than left unset, so a value leaking in from the
     # caller's environment cannot turn developer mode on by accident.
+    #
+    # WITH_ADB_INSECURE is LineageOS's own switch (vendor/lineage/config/
+    # common.mk): defined, it emits ro.adb.secure=0 instead of =1. Using it
+    # rather than adding our own ro.adb.secure line avoids "found duplicate
+    # sysprop assignments", which the build treats as an error. Exported
+    # only in developer mode; in stock it must be UNSET, not empty -- the
+    # makefile test is ifdef, so even an empty value would trigger it.
     local devmode="${DEVELOPER_MODE:+true}"
+    local adb_insecure=""
+    [ -n "$devmode" ] && adb_insecure="export WITH_ADB_INSECURE=true &&"
     [ -n "$devmode" ] && echo ">>> developer mode: Developer options, USB debugging, rooted debugging, ro.adb.secure=0"
-    in_container "export ALLOW_MISSING_DEPENDENCIES=true LINEAGE_DEVELOPER_MODE='$devmode' &&
+    in_container "$adb_insecure export ALLOW_MISSING_DEPENDENCIES=true LINEAGE_DEVELOPER_MODE='$devmode' &&
         ccache -M ${CCACHE_GB}G >/dev/null &&
         source build/envsetup.sh &&
         lunch $LUNCH_TARGET &&
