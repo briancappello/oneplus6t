@@ -339,12 +339,18 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
     # up to date. `git lfs pull` is idempotent and cheap when there is nothing
     # to do, so this runs unconditionally rather than trying to detect the case.
     echo ">>> materialising git-lfs objects (chromium-webview prebuilts)"
-    in_container 'rc=0
-        for d in external/chromium-webview/prebuilt/*/; do
+    # git lfs pull's exit code is NOT a reliable success signal here. In a repo
+    # checkout it prints "webview.apk: cannot add to the index - missing --add
+    # option?" and exits non-zero while having correctly written the file --
+    # repo's split .git layout confuses its index update, not its transfer.
+    # Trusting that exit code aborted the run with the APKs already on disk.
+    # The size assertion below is the real gate: verify the outcome, not the
+    # tool's opinion of itself.
+    in_container 'for d in external/chromium-webview/prebuilt/*/; do
             [ -e "$d/.git" ] || continue
-            ( cd "$d" && git lfs pull ) || rc=1
+            ( cd "$d" && git lfs pull >/dev/null 2>&1; true )
         done
-        exit $rc'
+        true'
 
     # Prove it worked rather than assuming. An LFS pointer is ~130 bytes and a
     # real WebView APK is tens of MB, so a size floor separates them cleanly.
