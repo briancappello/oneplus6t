@@ -26,11 +26,15 @@ on post-fs-data
     # adb_root.rc also does this; harmless to repeat, and it must exist
     # before the write below whichever .rc init parses first.
     mkdir /data/adbroot 0700 root root
-    exec_start developer-mode-seed
+    # `start`, NOT `exec_start`. exec_start is synchronous: init blocks until
+    # the service exits, and the first version of the seed waited up to
+    # 120 s for a property the setup wizard never sets, which stalled the
+    # whole boot by that long. `start` launches it and moves on.
+    start developer-mode-seed
 
 # A oneshot rather than inline `exec`: `settings` needs the system server's
-# content provider, which is not up at post-fs-data. The service waits for
-# it (sys.boot_completed) and then seeds everything in one place.
+# content provider, which is not up at post-fs-data. The service polls the
+# provider itself and then seeds everything in one place.
 service developer-mode-seed /system_ext/bin/developer-mode-seed
     user root
     group root shell

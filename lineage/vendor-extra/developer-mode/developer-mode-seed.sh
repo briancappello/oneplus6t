@@ -5,34 +5,37 @@
 #
 # Runs once per /data (marker file), from init as a oneshot in the
 # permissive `su` domain, so it can write the settings provider and the
-# adbroot store without its own sepolicy. Waits for the system server
-# because `settings` is a content-provider call and post-fs-data is far too
-# early for it.
+# adbroot store without its own sepolicy.
+#
+# Does NOT wait for sys.boot_completed. The setup wizard holds that
+# property back until it is dismissed, so the first version of this script
+# timed out after 120 s on every fresh /data without doing anything -- and
+# because it was launched with exec_start, init sat blocked on it for those
+# 120 s too. `settings` needs only the settings provider, which is up well
+# before the wizard; probing it directly is the correct wait.
 
 MARKER=/data/adbroot/.developer-mode-seeded
 [ -f "$MARKER" ] && exit 0
 
-# `settings` needs system_server; boot_completed is the simplest reliable
-# signal that it is answering. Bounded so a wedged boot cannot pin this
-# service forever.
+# The adbroot store does not depend on any framework state. Do it first, so
+# even if the settings provider never answers, rooted debugging is on.
+mkdir -p /data/adbroot
+chmod 0700 /data/adbroot
+echo -n 1 > /data/adbroot/enabled
+setprop service.adb.root 1
+
+# Wait for the settings provider by asking it, not by proxy. Bounded.
 i=0
-while [ "$(getprop sys.boot_completed)" != "1" ]; do
-    i=$((i + 1)); [ "$i" -ge 120 ] && exit 1
+until [ "$(settings get global device_provisioned 2>/dev/null)" != "" ]; do
+    i=$((i + 1)); [ "$i" -ge 90 ] && { echo "developer-mode-seed: settings provider not up after 90s" >&2; exit 1; }
     sleep 1
 done
 
 settings put global development_settings_enabled 1
 settings put global adb_enabled 1
 
-# Rooted debugging. This is the entire toggle: adbroot_service reads
-# /data/adbroot/enabled at start and adbd asks it whether root is allowed.
-mkdir -p /data/adbroot
-chmod 0700 /data/adbroot
-echo -n 1 > /data/adbroot/enabled
-setprop service.adb.root 1
-
-# adbd was started before adb_enabled existed; restart so it comes up with
-# debugging on and root allowed, without waiting for a reboot.
+# adbd started before adb_enabled and the adbroot flag existed; restart it so
+# debugging and root are live now, without a reboot.
 setprop ctl.restart adbd
 
 touch "$MARKER"
