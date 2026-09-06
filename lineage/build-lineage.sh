@@ -105,8 +105,16 @@ in_container() {
         -e CCACHE_DIR=/aosp/.ccache \
         -w /aosp \
         "$IMAGE_TAG" \
-        /bin/bash -euo pipefail -c "$1"
+        /bin/bash -c "$1"
 }
+# Deliberately NOT `bash -euo pipefail -c`. AOSP's build/envsetup.sh reads
+# plenty of variables that are legitimately unset (TOP, ZSH_VERSION, ...), so
+# `set -u` kills the build phase on its first line with "TOP: unbound
+# variable", and envsetup returns non-zero in places that `set -e` would treat
+# as fatal. AOSP is not written for strict mode and will not be.
+#
+# Nothing is lost: every caller either runs a single command, whose exit status
+# bash returns anyway, or chains its own steps with && and checks explicitly.
 
 # Heartbeat for the long phases. Prints one line a minute so a log tail shows
 # forward motion, and so a stall is visible as a flat GB column rather than as
@@ -291,9 +299,18 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
 phase_build() {
     check_disk
     echo ">>> brunch $LUNCH_TARGET with -j$BUILD_JOBS"
-    in_container "ccache -M ${CCACHE_GB}G >/dev/null
-        source build/envsetup.sh
-        breakfast $LUNCH_TARGET
+    # `lunch`, NOT `breakfast`. breakfast is lunch plus roomservice, and
+    # roomservice resolves lineage.dependencies over the network and writes its
+    # findings to .repo/local_manifests/roomservice.xml using floating branch
+    # names. That would silently un-pin the tree this script exists to pin. Every
+    # repo roomservice would look for is already present and at a known commit,
+    # so there is nothing for it to do except damage.
+    #
+    # Steps are chained with && because in_container runs without `set -e`
+    # (see the note there); without the chain a failed lunch would still run m.
+    in_container "ccache -M ${CCACHE_GB}G >/dev/null &&
+        source build/envsetup.sh &&
+        lunch $LUNCH_TARGET &&
         m -j$BUILD_JOBS bacon"
     echo ">>> build complete; images under $WORK/out/target/product/fajita"
 }
