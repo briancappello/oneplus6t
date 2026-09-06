@@ -33,6 +33,14 @@ FROM docker.io/library/debian@sha256:2f65600e1252c5649d2213e1d1ea4d74253d26514dc
 # and repo sets up an ssh ControlMaster for any declared ssh remote whether or
 # not a project uses it (no project does). Without the binary, `repo sync` dies
 # immediately with a bare "fatal: ssh not installed".
+#
+# git-lfs is required for the same reason, and LineageOS 20 DOES use LFS even
+# though the manifest declares no LFS remote: the four
+# external/chromium-webview/prebuilt/{arm,arm64,x86,x86_64} projects store the
+# prebuilt WebView APKs as LFS objects. Without the binary those four fail with
+# "git-lfs filter-process --skip: git-lfs: not found" and then "Cannot
+# initialize work tree" -- and because checkout runs last, the sync dies at the
+# very end after fetching everything else.
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
@@ -47,6 +55,7 @@ RUN set -eux; \
         fontconfig \
         flex \
         git \
+        git-lfs \
         gnupg \
         kmod \
         lib32ncurses-dev \
