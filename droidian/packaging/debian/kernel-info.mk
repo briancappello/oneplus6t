@@ -8,7 +8,7 @@
 VARIANT = android
 
 # Kernel base version
-KERNEL_BASE_VERSION = 4.9-113
+KERNEL_BASE_VERSION = 4.9-337
 
 # The kernel cmdline to use
 #
@@ -91,7 +91,7 @@ KERNEL_BOOTIMAGE_SECONDIMAGE_OFFSET = 0x00f00000
 KERNEL_BOOTIMAGE_TAGS_OFFSET = 0x00000100
 
 # Specify boot image security patch level if needed
-KERNEL_BOOTIMAGE_PATCH_LEVEL = 2018-12
+KERNEL_BOOTIMAGE_PATCH_LEVEL = 2026-02
 
 # Required for header version 2, ignore otherwise
 #KERNEL_BOOTIMAGE_DTB_OFFSET = 0x1f00000
@@ -102,7 +102,7 @@ KERNEL_BOOTIMAGE_PATCH_LEVEL = 2018-12
 # Devices launched with Android 9: version 1
 # Devices launched with Android 10: version 2
 # Devices launched with Android 11: version 2 or 3 (GKI)
-KERNEL_BOOTIMAGE_VERSION = 0
+KERNEL_BOOTIMAGE_VERSION = 1
 
 ########################################################################
 # Android verified boot
@@ -177,16 +177,16 @@ BUILD_TRIPLET = aarch64-linux-android-
 BUILD_CLANG_TRIPLET = aarch64-linux-gnu-
 
 # The compiler to use. Recent Android kernels are built with clang.
-BUILD_CC = aarch64-linux-android-gcc-4.9
+BUILD_CC = clang
 
 # Extra paths to prepend to the PATH variable. You'll probably want
 # to specify the clang path here (the default).
-BUILD_PATH = /usr/lib/llvm-android-6.0-4691093
+BUILD_PATH = /usr/lib/llvm-android-14.0-r450784d
 
 # Extra packages to add to the Build-Depends section. Mainline builds
 # can have this section empty, unless cross-building.
 # The default is enough to install the Android toolchain, including clang.
-DEB_TOOLCHAIN = linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, clang-android-6.0-4691093, gcc-4.9-aarch64-linux-android, g++-4.9-aarch64-linux-android, libgcc-4.9-dev-aarch64-linux-android-cross
+DEB_TOOLCHAIN = linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, clang-android-14.0-r450784d
 
 # Where we're building on
 DEB_BUILD_ON = amd64

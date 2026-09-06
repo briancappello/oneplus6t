@@ -5,36 +5,47 @@
 #   ./droidian/build-kernel.sh
 #
 # Produces, in droidian/out/:
-#   linux-bootimage-4.9-113-oneplus-fajita_*.deb   -> boot.img, recovery.img, vbmeta.img
+#   linux-bootimage-4.9-337-oneplus-fajita_*.deb   -> boot.img, recovery.img, vbmeta.img
 #   linux-image-*.deb  linux-headers-*.deb
+#   config-4.9-337-oneplus-fajita                  -> the .config actually built
 # and copies the raw images to droidian/out/images/ for flashing.
 #
-# Why this exists rather than just cloning junocomp's tree:
+# Why this exists rather than just building the LineageOS tree as-is:
 #
-#   * That repo is published WITHOUT debian/control, so it cannot build at all
-#     ("Unable to find debian/control"). We carry a reconstructed one, modelled
-#     on the droidian-devices/linux-android-fxtec-pro1 reference port.
-#   * It targets DEVICE_MODEL=oneplus6 with KERNEL_DEFCONFIG=enchilada_defconfig.
-#     We retarget to fajita so the artifacts are unambiguous. fajita_defconfig is
-#     byte-identical to enchilada_defconfig -- it contains no device-name strings,
-#     only SoC configuration -- so this is a naming change, not a functional one.
-#   * The device tree already builds fajita: CONFIG_BUILD_ARM64_DT_OVERLAY=y and
-#     arch/arm64/boot/dts/qcom/Makefile lists 10 fajita-*.dtbo overlays alongside
-#     the enchilada ones, all on the shared sdm845-v2.1.dtb base.
+#   * The LineageOS kernel repo has no debian/ directory; it is built by the
+#     Android build system. We carry a debian/ overlay (droidian/packaging/,
+#     modelled on the droidian-devices/linux-android-fxtec-pro1 reference port)
+#     so releng-build-package can turn it into the linux-image / linux-bootimage
+#     .debs the Droidian rootfs and its flash-on-upgrade hooks expect.
+#   * LineageOS ships enchilada_defconfig for both enchilada and fajita; the
+#     bootloader picks the fajita DT overlays from dtbo. We install our own
+#     fajita_defconfig = enchilada_defconfig + a reviewed Halium delta
+#     (namespaces, devtmpfs, apparmor, module signing off, ...). See
+#     docs/plans/2026-09-06-los20-kernel.md.
+#   * Local fixes go in as patches under droidian/packaging/patches/, applied
+#     idempotently below. The tree itself is never hand-edited: everything this
+#     script builds is the pinned commit plus what is committed in this repo.
 #
 # NOTE ON dtbo: kernel-info.mk sets KERNEL_IMAGE_WITH_DTB_OVERLAY=0 and the
 # generated flash-bootimage config says DEVICE_HAS_DTBO_PARTITION=no. Droidian
-# relies on the dtbo already present on the device, which for us is OxygenOS 9's
-# and already contains the fajita overlays. So unlike flash-pmos.sh, do NOT erase
-# dtbo_a when installing Droidian.
+# relies on the dtbo already on the slot, which is LineageOS 20's and contains
+# the fajita overlays. Do NOT erase dtbo when installing Droidian.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-KERNEL_REPO="https://github.com/junocomp/linux-android-oneplus-oneplus6"
-KERNEL_BRANCH="droidian"
-KERNEL_COMMIT="a11cace73"          # tip of droidian at 2024-01-01
+# LineageOS's lineage-20 kernel: the exact commit Phase 2's LineageOS 20
+# boot.img was built from (the running kernel reports 4.9.337-g7fbf93e22944),
+# so every divergence between this build and LineageOS's is ours. Replaces
+# the junocomp 4.9.113 tree; techpack/audio is in-tree here, no side checkout.
+KERNEL_REPO="https://github.com/LineageOS/android_kernel_oneplus_sdm845"
+KERNEL_BRANCH="lineage-20"
+KERNEL_COMMIT="7fbf93e229443b8366c18eaa0ea70dd499749e37"   # tip of lineage-20, 4.9.337
+
+# Derived once; the deb name, the image suffix and debian/control all carry
+# this string, and the 4.9.113 -> 4.9.337 rename found it in three places.
+KVER="4.9-337"
 
 # bookworm-amd64 was last rebuilt in May 2024 and every Droidian apt repo now
 # fails signature checks inside it (NO_PUBKEY 5E775B2A27AB0C94, plus an expired
@@ -58,10 +69,17 @@ runtime() {
 mkdir -p "$OUT_DIR" "$REPO_DIR"
 
 if [ ! -d "$KERNEL_DIR/.git" ]; then
-    echo ">>> cloning kernel (~1.1 GB)"
-    git clone --branch "$KERNEL_BRANCH" --depth 1 "$KERNEL_REPO" "$KERNEL_DIR"
+    echo ">>> cloning kernel (~2 GB)"
+    git clone --branch "$KERNEL_BRANCH" "$KERNEL_REPO" "$KERNEL_DIR"
 fi
-echo ">>> kernel at $(git -C "$KERNEL_DIR" rev-parse --short HEAD)"
+# Check out the pin explicitly. `--branch` alone fetches whatever the branch
+# tip is on clone day; that is this commit today and something else after
+# the next upstream push. Not --depth 1: a shallow clone cannot check out a
+# SHA that has moved off the tip, which is exactly when the pin matters.
+git -C "$KERNEL_DIR" checkout -q "$KERNEL_COMMIT"
+[ "$(git -C "$KERNEL_DIR" rev-parse HEAD)" = "$KERNEL_COMMIT" ] \
+    || { echo "kernel tree is not at $KERNEL_COMMIT" >&2; exit 1; }
+echo ">>> kernel at $(git -C "$KERNEL_DIR" rev-parse --short HEAD) ($(git -C "$KERNEL_DIR" describe --tags --always 2>/dev/null))"
 
 echo ">>> applying fajita packaging overlay"
 cp -v "$HERE/packaging/debian/"* "$KERNEL_DIR/debian/" 2>/dev/null | sed 's/^/    /' || true
@@ -102,12 +120,12 @@ $(runtime) run --rm \
 echo ">>> extracting images"
 IMAGES="$OUT_DIR/images"
 rm -rf "$IMAGES" && mkdir -p "$IMAGES"
-deb=$(ls "$OUT_DIR"/linux-bootimage-4.9-113-oneplus-fajita_*.deb 2>/dev/null | head -1)
+deb=$(ls "$OUT_DIR"/linux-bootimage-"$KVER"-oneplus-fajita_*.deb 2>/dev/null | head -1)
 [ -n "$deb" ] || { echo "no bootimage package produced" >&2; exit 1; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 ( cd "$tmp" && ar x "$deb" && tar xf data.tar.* )
 for f in boot recovery vbmeta; do
-    src="$tmp/boot/$f.img-4.9-113-oneplus-fajita"
+    src="$tmp/boot/$f.img-$KVER-oneplus-fajita"
     [ -f "$src" ] && cp "$src" "$IMAGES/$f.img" && \
         printf '    %-12s %s bytes  %s\n' "$f.img" "$(stat -c%s "$IMAGES/$f.img")" \
         "$(head -c8 "$IMAGES/$f.img" | tr -d '\0')"

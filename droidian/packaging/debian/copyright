@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: linux-android-oneplus-oneplus6
-Source: https://github.com/junocomp/linux-android-oneplus-oneplus6
+Upstream-Name: android_kernel_oneplus_sdm845
+Source: https://github.com/LineageOS/android_kernel_oneplus_sdm845
 
 Files: *
 Copyright: Linus Torvalds and others
