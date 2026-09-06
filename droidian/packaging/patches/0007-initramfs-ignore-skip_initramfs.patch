@@ -1,0 +1,46 @@
+From 643c09790703231201c383532d0e04a5612740fb Mon Sep 17 00:00:00 2001
+From: oneplus6t port <none@localhost>
+Date: Sun, 6 Sep 2026 16:51:11 -0600
+Subject: [PATCH] initramfs: ignore skip_initramfs from the bootloader
+
+The ABL appends skip_initramfs rootwait ro init=/init root=PARTUUID=<system>
+to the cmdline on every normal boot. Honouring it discards the halium
+initramfs, mounts LineageOS system_b as root and runs LineageOS /init on
+this kernel; its bpfloader then fails with reboot_on_failure and the phone
+reboots at 29 s, forever, with no USB gadget. Read from ramoops after a
+dload_on_reboot=1 boot. The old junocomp 4.9.113 tree had this neutered
+in-tree, which is why it never showed up in the patch list. This is the
+standard Halium change for system-as-root devices.
+
+Change-Id: I0854f8074fc444b7af2d3284a40cc771ff379209
+---
+ init/initramfs.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/init/initramfs.c b/init/initramfs.c
+index bf3af10c500a..6fc1faebcd01 100644
+--- a/init/initramfs.c
++++ b/init/initramfs.c
+@@ -609,11 +609,18 @@ static void __init clean_rootfs(void)
+ 
+ static int __initdata do_skip_initramfs;
+ 
++/*
++ * The bootloader appends skip_initramfs on every normal boot of a
++ * system-as-root device. Android wants that: its ramdisk is the recovery
++ * image and the real init lives on the system partition. Halium needs the
++ * opposite: the ramdisk IS the boot path. Accept the token so the cmdline
++ * parser stays quiet, but never act on it.
++ */
+ static int __init skip_initramfs_param(char *str)
+ {
+ 	if (*str)
+ 		return 0;
+-	do_skip_initramfs = 1;
++	do_skip_initramfs = 0;
+ 	return 1;
+ }
+ __setup("skip_initramfs", skip_initramfs_param);
+-- 
+2.55.0
+
