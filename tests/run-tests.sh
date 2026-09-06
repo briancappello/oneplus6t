@@ -132,16 +132,24 @@ python3 -c "
 import json
 d = json.load(open('$manifest'))
 a = d.get('artifacts', {})
-u = a.get('droidian/userdata.img', {})
+u = a.get('droidian/linuxroot.img', {})
 c = a.get('droidian/out-camera', {})
-print('userdata_target=' + str(u.get('target')))
-print('userdata_commit=' + str(bool(u.get('source_commit'))))
-print('userdata_sha=' + str(bool(u.get('sha256'))))
+print('rootfs_target=' + str(u.get('target')))
+print('rootfs_commit=' + str(bool(u.get('source_commit'))))
+print('rootfs_sha=' + str(bool(u.get('sha256'))))
 print('dep_kept=' + str(c.get('target')))
 " > /tmp/b-man.$$ 2>&1
-expect_contains "manifest keys artifacts by output path" /tmp/b-man.$$ 'userdata_target=rootfs'
-expect_contains "manifest records a source commit"       /tmp/b-man.$$ 'userdata_commit=True'
-expect_contains "manifest records a sha256"              /tmp/b-man.$$ 'userdata_sha=True'
+expect_contains "manifest keys artifacts by output path" /tmp/b-man.$$ 'rootfs_target=rootfs'
+expect_contains "manifest records a source commit"       /tmp/b-man.$$ 'rootfs_commit=True'
+expect_contains "manifest records a sha256"              /tmp/b-man.$$ 'rootfs_sha=True'
+
+# The rootfs is flashed to linuxroot, so the kernel must tell the initramfs to
+# look there. Read from the packaging the way the build does, so an edit that
+# drops the token fails here instead of at the first boot.
+grep '^KERNEL_BOOTIMAGE_CMDLINE = ' "$ROOT/droidian/packaging/debian/kernel-info.mk" \
+    | grep -o 'datapart=[^ ]*' > /tmp/b-cmd.$$
+expect_contains "the kernel cmdline points the initramfs at linuxroot" /tmp/b-cmd.$$ 'datapart=/dev/disk/by-partlabel/linuxroot'
+rm -f /tmp/b-cmd.$$
 # rootfs pulls in camera and adaptation; every target built this run must
 # survive in the manifest, which a per-target file would not have done.
 expect_contains "manifest keeps all targets from one run" /tmp/b-man.$$ 'dep_kept=camera'
@@ -260,6 +268,15 @@ printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-empty.$$
     > /tmp/pl-empty.$$ 2>/dev/null
 expect_contains "an absent artifact is requested" /tmp/pl-empty.$$ 'kernel'
 
+# FORCE=1 asks for everything with force set, so a source change behind a
+# complete manifest can be rebuilt through the same seam. Without it the plan
+# is empty, build.sh refuses an empty plan, and the remote build just dies.
+FORCE=1 "$PROV" --plan-only --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
+    > /tmp/pl-force.$$ 2>/dev/null
+expect_contains "FORCE=1 requests every target"  /tmp/pl-force.$$ 'rootfs'
+expect_contains "FORCE=1 sets force in the plan" /tmp/pl-force.$$ '"force": true'
+rm -f /tmp/pl-force.$$
+
 # The round trip. provision.sh decides from device evidence and emits a plan;
 # build.sh consumes exactly that file. These two agreed only on paper until the
 # manifest they share was made a single contract, so the seam is worth pinning.
@@ -342,7 +359,7 @@ rm -f /tmp/pr-act.$$
 # Skip detection: data phase skips when package versions match. One build target
 # ships several packages -- adaptation alone ships three -- so every .deb in the
 # manifest has to be accounted for, not one representative per target.
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-data-match.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-data-match.$$
 if skip_data /tmp/pr-data-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  PASS  data phase skips when versions match"; pass=$((pass+1))
 else
@@ -350,7 +367,7 @@ else
 fi
 
 # Skip detection: data phase runs when package version differs
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-diff.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-diff.$$
 if skip_data /tmp/pr-data-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  FAIL  data phase runs when version differs"; fail=$((fail+1))
 else
@@ -359,7 +376,7 @@ fi
 
 # A second package from the same target, missing on the device, must still stop
 # the skip: checking one .deb per target would have called this a match.
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-part.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-data-part.$$
 expect_pred "data runs when a sibling package of the same target is absent" \
     run skip_data /tmp/pr-data-part.$$ "$ROOT/tests/fixtures/manifest.json"
 
@@ -375,29 +392,51 @@ expect_rc "boot phase exits 0" 0 "$rc"
 expect_contains "boot phase flashes boot" /tmp/p-flash-boot.$$ 'boot: flashing'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-boot.$$ /tmp/p-flash-boot.$$
 
-# Flash phases: data phase flashes userdata
+# Flash phases: data phase flashes linuxroot
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-flash-data.$$
 mkdir -p /tmp/artifacts-test/droidian
-touch /tmp/artifacts-test/droidian/userdata.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-flash-data.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-flash-data.$$ 2>/tmp/p-flash-data-err.$$; rc=$?
 expect_rc "data phase exits 0" 0 "$rc"
-expect_contains "data phase flashes userdata" /tmp/p-flash-data.$$ 'data: installing rootfs'
+expect_contains "data phase flashes linuxroot" /tmp/p-flash-data.$$ 'data: installing rootfs'
 rm -rf /tmp/artifacts-test /tmp/pr-flash-data.$$ /tmp/p-flash-data.$$
+
+# Matching package versions are not a reason to skip while the install is
+# still on userdata: the whole point of the data phase is to move it.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=userdata\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-move.$$
+mkdir -p /tmp/artifacts-test/droidian
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
+timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-move.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-move.$$ 2>&1; rc=$?
+expect_contains "data runs when the install is still on userdata" /tmp/p-move.$$ 'data: installing rootfs'
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-stay.$$
+timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-stay.$$ 2>&1; rc=$?
+expect_contains "data skips once the install is on linuxroot" /tmp/p-stay.$$ 'data: skipped'
+# FORCE=1 rebuilt the image, so it must also be flashed: the device's package
+# versions cannot tell a rebuilt rootfs from the one it has. edl stays gated
+# on evidence; FORCE never rewrites the GPT.
+FORCE=1 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-force.$$ 2>&1; rc=$?
+expect_contains "FORCE=1 flashes data even when versions match" /tmp/p-force.$$ 'data: installing rootfs'
+: > "$HW_LOG"
+FORCE=1 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase edl > /tmp/p-force-edl.$$ 2>&1; rc=$?
+expect_absent "FORCE=1 never repartitions on its own" "$HW_LOG" 'repartition-dualboot'
+rm -f /tmp/p-force.$$ /tmp/p-force-edl.$$
+rm -rf /tmp/artifacts-test /tmp/pr-move.$$ /tmp/p-move.$$ /tmp/pr-stay.$$ /tmp/p-stay.$$
 
 # --artifacts mode accepts a path and runs all phases
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nboot_sha=bbbb\npkg_droidian-camera=2.0.0\npkg_adaptation-oneplus-fajita=1.0.0\n' > /tmp/pr-ok.$$
 mkdir -p /tmp/artifacts-test/droidian/out/images
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/userdata.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 : > "$HW_LOG"
 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
-timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ > /tmp/p-art.$$ 2>&1; rc=$?
+timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/p-art.$$ 2>&1; rc=$?
 expect_rc "--artifacts mode exits 0" 0 "$rc"
 # rc=124 would mean a phase blocked waiting for a device. Bounded so that a
 # regression fails the suite instead of hanging it.
 expect_contains "the boot flash names the slot" "$HW_LOG" 'fastboot flash boot_a'
-expect_contains "the userdata flash is issued" "$HW_LOG" 'fastboot flash userdata'
+expect_contains "the linuxroot flash is issued" "$HW_LOG" 'fastboot flash linuxroot'
+expect_absent   "userdata is never flashed"       "$HW_LOG" 'fastboot flash userdata'
 expect_contains "--artifacts echoes the path" /tmp/p-art.$$ '/tmp/artifacts-test'
 expect_contains "edl phase runs" /tmp/p-art.$$ 'edl:'
 expect_contains "boot phase runs" /tmp/p-art.$$ 'boot:'
@@ -431,7 +470,7 @@ expect_contains "leaving the bootloader is waited for" "$HW_LOG" 'device-goto dr
 # nothing flashed, rather than firing fastboot at a device that cannot hear it.
 : > "$HW_LOG"
 FAKE_GOTO_RC=1 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
-    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     --phase boot > /tmp/p-nogoto.$$ 2>&1; rc=$?
 expect_rc "a phone that will not enter the bootloader fails the run" 1 "$rc"
 expect_absent "and nothing is flashed at it" "$HW_LOG" 'fastboot flash'
@@ -442,7 +481,7 @@ expect_absent "and nothing is flashed at it" "$HW_LOG" 'fastboot flash'
 : > "$HW_LOG"
 FAKE_FASTBOOT_HANG=reboot FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
     ACTIVATE_TIMEOUT=2 VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
-    timeout 60 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    timeout 60 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     > /tmp/p-hang.$$ 2>&1; rc=$?
 expect_rc "an unanswered reboot does not hang the run" 0 "$rc"
 expect_contains "it says fastboot went quiet" /tmp/p-hang.$$ 'did not confirm the reboot'
@@ -461,7 +500,7 @@ expect_contains "and says nothing was verified" /tmp/p-unreach.$$ 'nothing was v
 # Reachable but wrong must fail too. This is the case that used to answer an
 # echo and call the install successful.
 FAKE_SSH_FIXTURE="$HERE/fixtures/probe-droidian.txt" VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 \
-    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ \
+    timeout 30 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-ok.$$ --manifest "$ROOT/tests/fixtures/manifest.json" \
     --phase verify > /tmp/p-bad.$$ 2>&1; rc=$?
 expect_rc "a reachable but incorrect install fails verify" 1 "$rc"
 expect_contains "and reports the failing checks" /tmp/p-bad.$$ 'FAILURES'
@@ -499,7 +538,7 @@ printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\nhas_linuxroot=n
 mkdir -p /tmp/artifacts-test/droidian/out/images /tmp/artifacts-test/msm
 touch /tmp/artifacts-test/droidian/out/images/boot.img
 touch /tmp/artifacts-test/droidian/out/images/vbmeta.img
-touch /tmp/artifacts-test/droidian/userdata.simg
+printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 touch /tmp/artifacts-test/msm/gpt_main0.bin
 
 : > "$HW_LOG"
@@ -517,7 +556,7 @@ expect_absent "a refused run flashes nothing"      "$HW_LOG" 'fastboot flash'
 # consent, not about how long a real phone takes to come back.
 VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
 timeout 30 "$PROV" --artifacts /tmp/artifacts-test --probe-file /tmp/pr-des.$$ \
-    --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
+    --manifest "$ROOT/tests/fixtures/manifest.json" --yes < /dev/null > /tmp/p-yes.$$ 2>&1; rc=$?
 expect_rc "--yes proceeds without a terminal" 0 "$rc"
 expect_contains "the confirmed run repartitions" "$HW_LOG" 'repartition-dualboot'
 
@@ -573,11 +612,24 @@ expect_contains "artifacts are fetched back"      "$rlog" 'manifest.json'
 # A remote build touches no phone, so it must not require one to be attached.
 expect_absent  "a supplied plan probes no device" "$HW_LOG" 'device-ssh'
 
+# A plan that builds nothing is the normal case on a phone that is already
+# current. It must not be handed to build.sh (which refuses it) and must not
+# fail the run; the manifest still comes back for the flash phases.
+printf '{"build":[],"force":false}\n' > /tmp/rp-empty.$$
+: > "$rlog"
+PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
+    timeout 30 "$PROV" --remote-build taichi --plan-file /tmp/rp-empty.$$ \
+    --manifest "$rman" > /tmp/rb-empty.$$ 2>&1; rc=$?
+expect_rc "an empty plan does not fail the run"      0 "$rc"
+expect_absent "an empty plan is not handed to build.sh" "$rlog" 'build.sh --plan'
+expect_contains "the manifest is still fetched"       "$rlog" 'manifest.json'
+rm -f /tmp/rp-empty.$$ /tmp/rb-empty.$$
+
 # The rootfs moves compressed and sparse -- a seventh of the raw bytes -- and
 # never as a plain copy of the raw image.
 expect_contains "the rootfs is fetched compressed"    "$rlog" 'zstd -c'
-expect_contains "and in its sparse form"              "$rlog" 'userdata.simg'
-expect_absent  "the raw image is never copied over"   "$rlog" 'userdata.img'
+expect_contains "and in its sparse form"              "$rlog" 'linuxroot.simg'
+expect_absent  "the raw image is never copied over"   "$rlog" 'linuxroot.img'
 
 # A transfer that arrives with the wrong bytes must never reach the phone. This
 # is the one artifact big enough that a silent truncation is plausible, and a
@@ -596,7 +648,7 @@ PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
 expect_rc "a corrupt rootfs transfer fails the run" 1 "$rc"
 expect_contains "and says the hash disagreed" /tmp/rb3.$$ 'arrived corrupt'
 expect_absent  "and nothing is flashed"       "$HW_LOG" 'fastboot flash'
-[ -e "$fetchroot/droidian/userdata.simg.part" ] \
+[ -e "$fetchroot/droidian/linuxroot.simg.part" ] \
     && { echo "  FAIL  a failed transfer leaves no .part behind"; fail=$((fail+1)); } \
     || { echo "  PASS  a failed transfer leaves no .part behind"; pass=$((pass+1)); }
 rm -f /tmp/rb3.$$
@@ -605,6 +657,41 @@ rm -f /tmp/rb3.$$
 # only for work deliberately kept unpushed.
 expect_contains "a published commit fetches from origin" "$rlog" 'git fetch -q origin'
 expect_absent  "a published commit sends no bundle"      "$rlog" 'op6t.bundle'
+
+# A rootfs already on disk is reused only when it is the one the manifest
+# describes. A stale one from an earlier build was flashed once while the
+# worker had already replaced it -- the phone got the old image and nothing
+# said so.
+cat > /tmp/fake-ssh.$$ <<FS
+#!/usr/bin/env bash
+echo "SSH \$*" >> $rlog
+case "\$*" in *zstd*) printf 'sparse rootfs fixture\n' | zstd -c ;; esac
+exit 0
+FS
+chmod +x /tmp/fake-ssh.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=userdata\n' > /tmp/pr-stale.$$
+mkdir -p "$fetchroot/droidian"
+printf 'stale rootfs from an earlier run\n' > "$fetchroot/droidian/linuxroot.simg"
+: > "$rlog"; : > "$HW_LOG"
+BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ \
+    timeout 30 "$PROV" --yes --artifacts "$fetchroot" --probe-file /tmp/pr-stale.$$ \
+    --manifest "$rman" --phase data > /tmp/rb4.$$ 2>&1; rc=$?
+expect_rc "a stale local rootfs does not fail the run" 0 "$rc"
+expect_contains "a stale local rootfs is fetched again"  "$rlog" 'zstd -c'
+expect_contains "and the fresh one is flashed"           "$HW_LOG" 'fastboot flash linuxroot'
+: > "$rlog"
+BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ \
+    timeout 30 "$PROV" --yes --artifacts "$fetchroot" --probe-file /tmp/pr-stale.$$ \
+    --manifest "$rman" --phase data > /dev/null 2>&1
+expect_absent  "a current local rootfs is not fetched again" "$rlog" 'zstd -c'
+# Without a worker to ask, a mismatch is a refusal, not a flash.
+printf 'stale rootfs from an earlier run\n' > "$fetchroot/droidian/linuxroot.simg"
+: > "$HW_LOG"
+timeout 30 "$PROV" --yes --artifacts "$fetchroot" --probe-file /tmp/pr-stale.$$ \
+    --manifest "$rman" --phase data > /tmp/rb5.$$ 2>&1; rc=$?
+expect_rc "a stale rootfs with no worker fails the run" 1 "$rc"
+expect_absent "and flashes nothing"                      "$HW_LOG" 'fastboot flash'
+rm -f /tmp/pr-stale.$$ /tmp/rb4.$$ /tmp/rb5.$$
 
 : > "$rlog"
 PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=0 \
@@ -635,11 +722,14 @@ exit 0
 FS
 chmod +x /tmp/fake-ssh.$$
 printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\nslot=a\n' > /tmp/pr-fm.$$
+# A manifest with nothing in it, so there is something to build: a complete
+# one yields an empty plan, and an empty plan is not sent to the worker.
+printf '{"artifacts":{},"repo_commit":"x"}\n' > /tmp/m-fm.$$
 : > "$rlog"; : > "$HW_LOG"
 BUILD_HOST=taichi PROV_SSH=/tmp/fake-ssh.$$ PROV_SCP=/tmp/fake-scp.$$ PROV_PUBLISHED=1 \
     VERIFY_ATTEMPTS=1 VERIFY_DELAY=0 FAKE_SSH_FIXTURE="$HERE/fixtures/verify-healthy.txt" \
     timeout 60 "$PROV" --probe-file /tmp/pr-fm.$$ --phase verify \
-    --manifest "$ROOT/tests/fixtures/manifest.json" > /tmp/fm.$$ 2>&1; rc=$?
+    --manifest /tmp/m-fm.$$ > /tmp/fm.$$ 2>&1; rc=$?
 expect_rc "full mode needs no flag to say what to do" 0 "$rc"
 expect_contains "BUILD_HOST builds on the worker first" "$rlog" 'build.sh --plan'
 expect_contains "and then runs the phases"              /tmp/fm.$$ 'verify:'
@@ -672,6 +762,15 @@ expect_contains "package versions parsed"  /tmp/p-dro.$$ 'pkg_halium-hostdev-per
 expect_contains "probe is complete"        /tmp/p-dro.$$ 'probe_complete=yes'
 expect_contains "the running slot is read"  /tmp/p-dro.$$ 'slot=a'
 expect_contains "linuxroot is detected"     /tmp/p-dro.$$ 'has_linuxroot=yes'
+expect_contains "the data partition is named" /tmp/p-dro.$$ 'data_part=userdata'
+
+# A probe whose datapart section is missing must say unknown, not guess.
+sed '/^--- datapart$/,/^--- partlabels$/{/^--- partlabels$/!d}' \
+    "$ROOT/tests/fixtures/probe-droidian.txt" > /tmp/f-nodp.$$
+PROBE_STATE=droidian PROBE_SSH_FIXTURE=/tmp/f-nodp.$$ \
+    bash "$PROBE" probe_all > /tmp/p-nodp.$$ 2>&1
+expect_contains "an unreadable data partition is unknown" /tmp/p-nodp.$$ 'data_part=unknown'
+rm -f /tmp/f-nodp.$$ /tmp/p-nodp.$$
 
 # A device that listed its partitions without linuxroot is the only state that
 # may authorise a repartition, so it must be told apart from a failed listing.

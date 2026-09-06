@@ -58,6 +58,12 @@ except Exception:
 ALL = ["kernel", "camera", "adaptation", "rootfs"]
 have = {a.get("target") for a in man.get("artifacts", {}).values()}
 
+# FORCE=1: a complete manifest says nothing about whether the sources behind
+# it have moved, and this decision has no view of them. build.sh does, but it
+# is only handed what is asked for here, and it refuses an empty plan.
+if os.environ.get("FORCE") == "1":
+    print(" ".join(ALL)); raise SystemExit
+
 # An unreadable device is not evidence that anything can be skipped, so an
 # incomplete probe asks for everything rather than guessing.
 if facts.get("probe_complete") != "yes":
@@ -72,7 +78,8 @@ emit_plan() {
     TARGETS="$targets" python3 - <<'PY'
 import json, os
 targets = os.environ["TARGETS"].split()
-print(json.dumps({"build": targets, "force": False}, indent=2, sort_keys=True))
+force = os.environ.get("FORCE") == "1"
+print(json.dumps({"build": targets, "force": force}, indent=2, sort_keys=True))
 PY
 }
 
@@ -130,8 +137,16 @@ remote_build() {
 
     "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./check-env.sh build" \
         || die "$host is missing build prerequisites"
-    "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./build.sh --plan /tmp/plan.json" \
-        || die "the build failed on $host"
+    # An empty plan is a valid answer -- the phone already has everything --
+    # and build.sh rightly refuses to be handed one. Skip the build, not the
+    # run: the manifest and images still come back so the flash phases can
+    # decide from them.
+    if [ -n "$(PLAN="$plan" python3 -c 'import json,os; print(" ".join(json.load(open(os.environ["PLAN"])).get("build", [])))')" ]; then
+        "$SSH_CMD" "$host" "cd $REMOTE_DIR && ./build.sh --plan /tmp/plan.json" \
+            || die "the build failed on $host"
+    else
+        echo ">>> nothing to build on $host; fetching what it has"
+    fi
 
     # Bring back the manifest first: if it is absent the build produced nothing
     # trustworthy and flashing must not proceed.
@@ -147,7 +162,7 @@ remote_build() {
     done
 }
 
-ROOTFS_IMG="droidian/userdata.simg"
+ROOTFS_IMG="droidian/linuxroot.simg"
 
 # manifest_field <path> <field> — one recorded property of one artifact.
 manifest_field() {
@@ -208,6 +223,16 @@ fetch_rootfs() {
     [ "$got" = "$want" ] \
         || fail_fetch "the rootfs arrived corrupt: sha256 $got, expected $want"
     mv "$dest.part" "$dest" || fail_fetch "could not finish the rootfs transfer"
+}
+
+# rootfs_current <file> — the file exists and its sha256 is the one the
+# manifest records for the rootfs.
+rootfs_current() {
+    local f=$1 want
+    [ -f "$f" ] || return 1
+    want=$(manifest_field "$ROOTFS_IMG" sha256)
+    [ -n "$want" ] || return 1
+    [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$want" ]
 }
 
 # confirm_destructive <line...> — name every irreversible step, then require an
@@ -317,6 +342,14 @@ if [ "$MODE" = artifacts ]; then
     if wanted edl      && ! skip_edl      "$PROBE_FILE" "$MANIFEST"; then run_edl=yes; fi
     if wanted boot     && ! skip_boot     "$PROBE_FILE" "$MANIFEST"; then run_boot=yes; fi
     if wanted data     && ! skip_data     "$PROBE_FILE" "$MANIFEST"; then run_data=yes; fi
+    # FORCE=1 rebuilt every artifact, and the device cannot tell a rebuilt
+    # rootfs or kernel from the one it has by the evidence the probe reads.
+    # So it flashes them too. edl is not on this list: nothing forces a GPT
+    # rewrite except a device that demonstrably lacks linuxroot.
+    if [ "${FORCE:-0}" = 1 ]; then
+        wanted boot && run_boot=yes
+        wanted data && run_data=yes
+    fi
     if wanted activate && ! skip_activate "$PROBE_FILE" "$MANIFEST"; then run_activate=yes; fi
     # Anything that puts the phone in the bootloader has to take it back out
     # again, whatever the probe said before the flash began. Deciding this from
@@ -387,14 +420,22 @@ if [ "$MODE" = artifacts ]; then
     # Phase 3: data - install rootfs (destructive)
     if [ "$run_data" = yes ]; then
         echo "    data: installing rootfs"
-        userdata_img="$ARTIFACTS/$ROOTFS_IMG"
+        rootfs_img="$ARTIFACTS/$ROOTFS_IMG"
         # Only fetched once it is known to be needed, so a run that skips this
-        # phase does not move gigabytes to decide it had nothing to do.
-        [ -f "$userdata_img" ] || [ -z "${BUILD_HOST:-}" ] || fetch_rootfs "$BUILD_HOST"
-        [ -f "$userdata_img" ] || die "rootfs image not found: $userdata_img"
-        echo "    data: flashing userdata (~$(( $(stat -c%s "$userdata_img") / 1000000 )) MB sparse)"
-        fastboot flash userdata "$userdata_img" || die "failed to flash userdata"
-        echo "    data: flashed userdata"
+        # phase does not move gigabytes to decide it had nothing to do. And
+        # only reused when it is the image the manifest describes: a stale one
+        # from an earlier build was flashed once after the worker had already
+        # replaced it, and nothing on the phone could tell the difference.
+        if ! rootfs_current "$rootfs_img"; then
+            [ -n "${BUILD_HOST:-}" ] \
+                || die "$rootfs_img is missing or is not the image the manifest describes; run build.sh, or set BUILD_HOST"
+            fetch_rootfs "$BUILD_HOST"
+        fi
+        # linuxroot, never userdata: userdata is Android's /data, and the
+        # kernel cmdline (datapart=) points the halium initramfs here.
+        echo "    data: flashing linuxroot (~$(( $(stat -c%s "$rootfs_img") / 1000000 )) MB sparse)"
+        fastboot flash linuxroot "$rootfs_img" || die "failed to flash linuxroot"
+        echo "    data: flashed linuxroot"
     elif wanted data; then
         echo "    data: skipped (already correct)"
     fi

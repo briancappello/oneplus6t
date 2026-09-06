@@ -29,7 +29,7 @@ TARGETS=(
   "kernel||droidian/out/images/boot.img droidian/out/images/vbmeta.img|kernel|droidian/build-kernel.sh"
   "camera||droidian/out-camera|camera|droidian/build-camera.sh"
   "adaptation||droidian/out-adaptation|adaptation|droidian/adaptation/build-adaptation.sh"
-  "rootfs|camera adaptation|droidian/userdata.img droidian/userdata.simg|droidian|droidian/build-rootfs.sh"
+  "rootfs|camera adaptation|droidian/linuxroot.img droidian/linuxroot.simg|droidian|droidian/build-rootfs.sh"
 )
 
 list_targets() {

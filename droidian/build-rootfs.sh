@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# Prepare a flashable Droidian userdata image for the OnePlus 6T (fajita).
+# Prepare a flashable Droidian data image for the OnePlus 6T (fajita).
 #
 #   ./droidian/build-rootfs.sh
 #
-# Produces droidian/userdata.img: an ext4 filesystem containing Droidian's
-# rootfs.img, ready for `fastboot flash userdata`.
+# Produces droidian/linuxroot.img: an ext4 filesystem containing Droidian's
+# rootfs.img, ready for `fastboot flash linuxroot`. Android keeps `userdata`;
+# the kernel cmdline (datapart=, see packaging/debian/kernel-info.mk) points
+# the halium initramfs at linuxroot instead.
 #
 # Droidian does NOT flash a rootfs partition. Its installer (setup.sh inside
 # the release zip) drops rootfs.img as a FILE into /data, resizes it, and
 # loop-mounts it. The official flow does that from TWRP. We build the same
 # layout offline instead, so no recovery and no manual steps are needed.
 #
-# HARD REQUIREMENT: the userdata filesystem must have a journal.
+# HARD REQUIREMENT: the data filesystem must have a journal.
 # The halium initramfs mounts /data with `data=journal`. Building the image
 # with `-O ^has_journal` makes that remount fail:
 #
@@ -32,13 +34,22 @@ DOWNLOADS="$ROOT/downloads"
 # which is what OxygenOS 9.0.17 gives us and what Droidian requires on the 6T.
 API="${API:-28}"
 RELEASE_REPO="droidian-images/droidian"
-ROOTFS_SIZE="${ROOTFS_SIZE:-8G}"        # setup.sh resizes to 8G when there is
-                                        # no .full_resize marker
-IMG_BLOCKS="${IMG_BLOCKS:-2359296}"     # 9 GiB of 4 KiB blocks; must exceed
-                                        # ROOTFS_SIZE plus fs overhead
+# The inner rootfs.img is grown here, at build time, because the Droidian
+# rootfs ships no e2fsprogs to grow it on the device. 100G is SPARSE: only the
+# ~4.5 GB of real data occupies blocks, and mke2fs -d keeps the holes when it
+# packs the file into the outer image (verified: a 5 GiB sparse file costs 16
+# blocks in a 256 MiB image). A file's logical size is not bounded by its
+# filesystem's size, so this fits in the 9 GiB outer image below; the halium
+# initramfs then grows the outer filesystem to the 114 GiB linuxroot partition
+# on first boot, and verify-device.sh asserts both sizes. The 14 GiB left over
+# is for android-data, the container's /data, which lives beside rootfs.img.
+ROOTFS_SIZE="${ROOTFS_SIZE:-100G}"
+IMG_BLOCKS="${IMG_BLOCKS:-2359296}"     # 9 GiB of 4 KiB blocks; must exceed the
+                                        # ALLOCATED size of the rootfs plus fs
+                                        # overhead, not its sparse logical size
 STAGE="$HERE/stage"
-OUT="$HERE/userdata.img"
-SPARSE="$HERE/userdata.simg"
+OUT="$HERE/linuxroot.img"
+SPARSE="$HERE/linuxroot.simg"
 
 say() { printf '\n>>> %s\n' "$*"; }
 
@@ -80,6 +91,16 @@ ls -l "$STAGE/rootfs.img" | awk '{printf "    %s bytes\n",$5}'
 say "resizing rootfs to $ROOTFS_SIZE"
 e2fsck -fy "$STAGE/rootfs.img" >/dev/null 2>&1 || true   # rc 1/2 = fixed, fine
 resize2fs -f "$STAGE/rootfs.img" "$ROOTFS_SIZE" 2>&1 | tail -1
+# resize2fs exits 0 on some refusals it only prints. Assert the result: the
+# block count must be within 1% of what was asked for.
+want_blocks=$(( $(numfmt --from=iec "$ROOTFS_SIZE") / 4096 ))
+got_blocks=$(dumpe2fs -h "$STAGE/rootfs.img" 2>/dev/null | awk '/^Block count/{print $3}')
+if [ -z "$got_blocks" ] || [ "$got_blocks" -lt $(( want_blocks * 99 / 100 )) ]; then
+    echo "ABORT: rootfs.img is $got_blocks blocks after resize, wanted $want_blocks" >&2
+    exit 1
+fi
+printf '    rootfs.img: %s blocks (%s), sparse: %s allocated\n' "$got_blocks" "$ROOTFS_SIZE" \
+    "$(du -h "$STAGE/rootfs.img" | cut -f1)"
 
 # setup.sh creates this symlink so the halium initramfs can find the Android
 # container image inside the rootfs.
@@ -176,12 +197,26 @@ fusermount3 -u /mnt/rootfs
 fi
 
 # ---------------------------------------------------------------- pack
-say "building userdata.img (WITH journal - see comment at top)"
+# The image is 9 GiB inside a 114 GiB partition. The halium initramfs grows
+# the filesystem to the partition on first boot (resize_userdata_if_needed in
+# scripts/halium) -- but only for /dev/mmcblk* and /dev/disk* paths, which is
+# why the cmdline names the partition as /dev/disk/by-partlabel/linuxroot.
+say "building linuxroot.img (WITH journal - see comment at top)"
 rm -f "$OUT"
-mke2fs -t ext4 -L data -d "$STAGE" -b 4096 -m 0 "$OUT" "$IMG_BLOCKS" 2>&1 | tail -2
+# -O ^orphan_file: the halium initramfs carries e2fsprogs 1.43.4 (2017), and
+# orphan_file (default since 1.47) is a feature it does not know. Its e2fsck and
+# resize2fs then fail with "unsupported feature(s)" -- silently, because the
+# script logs "resized" regardless -- so the fs was never checked and never
+# grown past the 9 GiB built here. Verified by running the initramfs's own
+# resize2fs under qemu-user against both variants.
+mke2fs -t ext4 -L data -d "$STAGE" -b 4096 -m 0 -O ^orphan_file "$OUT" "$IMG_BLOCKS" 2>&1 | tail -2
 
 if ! dumpe2fs -h "$OUT" 2>/dev/null | grep -q has_journal; then
     echo "ABORT: produced image has no journal; halium will refuse to mount it" >&2
+    exit 1
+fi
+if dumpe2fs -h "$OUT" 2>/dev/null | grep '^Filesystem features' | grep -q orphan_file; then
+    echo "ABORT: produced image has orphan_file; the initramfs e2fsprogs cannot resize it" >&2
     exit 1
 fi
 

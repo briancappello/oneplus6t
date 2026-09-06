@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Device-specific repositories for lineage_fajita-userdebug (OnePlus 6T).
+
+  This replaces `breakfast`'s roomservice step. roomservice resolves
+  lineage.dependencies at run time and writes floating branch names, so two
+  syncs a week apart can produce two different trees. Every repository here is
+  pinned to an explicit commit instead, which is the whole reason Phase 2 can
+  claim a reproducible build.
+
+  The closure was taken from lineage.dependencies, not guessed:
+      device/oneplus/fajita
+        -> device/oneplus/sdm845-common
+             -> hardware/oneplus
+             -> kernel/oneplus/sdm845
+  plus the two TheMuppets blob repos, which is why no blob extraction from a
+  running phone is needed.
+
+  The `github` remote (fetch="https://github.com/") is defined by the
+  LineageOS manifest we init against, so both LineageOS/* and TheMuppets/*
+  resolve through it.
+
+  Revisions verified as the tip of lineage-20 on 2026-09-06. These branches are
+  frozen upstream (device tree 2023-08, kernel 2024-02, blobs 2022-09 and
+  2023-08), so pinning costs nothing and buys determinism.
+
+  Note for editors: a double hyphen is illegal inside an XML comment. It is
+  not a style rule, it is a parse error, and repo reports it as an unhelpful
+  "not well-formed (invalid token)" hours after you stop looking.
+-->
+<manifest>
+
+  <!-- Device trees -->
+  <project name="LineageOS/android_device_oneplus_fajita"
+           path="device/oneplus/fajita"
+           remote="github"
+           revision="679d5a3254ab00faea8ebc94a04d449493cf8c1b" />
+
+  <project name="LineageOS/android_device_oneplus_sdm845-common"
+           path="device/oneplus/sdm845-common"
+           remote="github"
+           revision="520b6e4a8d99d84c64bcca6338c314129e42e6bb" />
+
+  <!-- HALs shared by the OnePlus sdm845 family -->
+  <project name="LineageOS/android_hardware_oneplus"
+           path="hardware/oneplus"
+           remote="github"
+           revision="a2095be16213e3643c157d3534c4c24918a76144" />
+
+  <!--
+    Kernel 4.9.337, techpack/audio in-tree. Phase 3 builds the Halium kernel
+    from THIS tree, so the commit must match what Phase 2 shipped or the
+    vendor blobs and the kernel disagree about interfaces.
+
+    Careful: this repo also has a refs/heads/backups/20230117-1337/lineage-20
+    branch, which a `git ls-remote` pattern match on "lineage-20" also matches
+    and can return first. The real lineage-20 tip is the commit below.
+  -->
+  <project name="LineageOS/android_kernel_oneplus_sdm845"
+           path="kernel/oneplus/sdm845"
+           remote="github"
+           revision="7fbf93e229443b8366c18eaa0ea70dd499749e37" />
+
+  <!-- Proprietary blobs, extracted from OxygenOS 11.1.2.2 (22.J.62) -->
+  <project name="TheMuppets/proprietary_vendor_oneplus_fajita"
+           path="vendor/oneplus/fajita"
+           remote="github"
+           revision="937dd991a7afeb6daeb79042c383edb93940dab0" />
+
+  <project name="TheMuppets/proprietary_vendor_oneplus_sdm845-common"
+           path="vendor/oneplus/sdm845-common"
+           remote="github"
+           revision="a3fc5ad31fba128248747c8f9cc0abab67314af7" />
+
+</manifest>

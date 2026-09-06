@@ -99,6 +99,12 @@ PY
 skip_data() {
     local probe=$1 manifest=$2 want name ver probe_ver
 
+    # The install has to be on linuxroot before package versions mean
+    # anything. "unknown" is not evidence either way, and the safe direction
+    # here is to run: a needless rootfs flash costs minutes, a skipped move
+    # leaves Droidian sitting in the partition Android is about to format.
+    [ "$(grep '^data_part=' "$probe" | cut -d= -f2)" = linuxroot ] || return 1
+
     want=$(MAN="$manifest" python3 - <<'PY'
 import json, os, sys
 try:

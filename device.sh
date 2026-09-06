@@ -99,7 +99,11 @@ goto() {
             sleep 20; wait_for droidian 300 ;;
 
         fastboot/droidian|fastboot/android)
-            fastboot reboot >/dev/null 2>&1; wait_for "$want" 300 ;;
+            # Bounded: after a large flash the bootloader reboots without
+            # answering and fastboot sits on a USB read forever (measured:
+            # 228 s and counting, with the phone already booted). The reboot
+            # has been delivered by then; wait_for observes the outcome.
+            timeout 60 fastboot reboot >/dev/null 2>&1; wait_for "$want" 300 ;;
         fastboot/edl)
             # The bootloader rejects oem edl / enter-dload / reboot emergency,
             # so go the long way round through a booted system.

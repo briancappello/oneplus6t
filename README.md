@@ -3,13 +3,14 @@
 Working toward a set of scripts that can put any of several operating systems
 on a OnePlus 6T, with a known-good Android always recoverable underneath.
 
-**Today this repo does one thing:** restore a device from a destroyed
-partition table back to stock OxygenOS 11.1.2.2 (34.J.62), entirely from
-Linux, entirely from EDL. That is the floor everything else stands on — if an
-experiment bricks the phone, this brings it back.
-
-Planned, not built: postmarketOS, LineageOS, and dual-booting a stock Android
-against a self-built Linux. See [Roadmap](#roadmap).
+**Today this repo does two things.** It restores a device from a destroyed
+partition table back to stock OxygenOS (11.1.2.2 or 9.0.17), entirely from
+Linux, entirely from EDL — the floor everything else stands on. And it takes
+that device to a **dual boot of OxygenOS 9 (slot b) and Droidian (slot a)**
+with separate data partitions, built and flashed by scripts, verified on the
+phone. The whole path is the [Runbook](#runbook-any-state-to-oxygenos-9--droidian)
+below. That state is tagged `oos9-stable`; it is the known-working baseline
+every later experiment (LineageOS 20, see `docs/plans/`) falls back to.
 
 ```bash
 git clone https://github.com/briancappello/oneplus6t
@@ -24,11 +25,99 @@ exact install command for anything missing, per distro. It installs nothing
 itself — all the remediations need root, and this repo does not take root.
 Each entry in it was previously discovered as a mid-build failure.
 
+## Runbook: any state to OxygenOS 9 + Droidian
+
+The end state, verified 2026-09-06 (`oos9-stable`):
+
+```
+fastboot set_active a  ->  boot_a (Droidian kernel) + vendor_a + linuxroot  ->  Droidian
+fastboot set_active b  ->  boot_b + system_b + vendor_b + userdata           ->  OxygenOS 9.0.17
+```
+
+`userdata` and `linuxroot` are each 114.6 GiB. Android mounts `/data` by name
+and nothing in its fstab names `linuxroot`; Droidian's kernel cmdline carries
+`datapart=/dev/disk/by-partlabel/linuxroot`, so neither OS can see the other's
+data. Inside `linuxroot`, `rootfs.img` is 100G (sparse) and the outer
+filesystem is grown to the partition by the initramfs on first boot.
+
+Start at the step that matches the phone. Every step is idempotent and safe to
+repeat; every step ends in a state the next one recognises.
+
+**Step 0 — the machines.** Once per host.
+
+```bash
+./check-env.sh flash                       # the machine with the phone
+BUILD_HOST=taichi ./check-env.sh flash     # ... and that the worker answers
+python3 bootstrap.py                       # MSM tool, EDL loader, OOS 11 zip
+# OOS 9 has no download URL: place OnePlus6TOxygen_34_OTA_024_all_1909112343_d5b1905.zip
+# in downloads/ by hand; bootstrap.py verifies its SHA256.
+```
+
+**Step 1 — Android is broken, or the GPT is.** Phone in EDL: power off fully,
+hold Volume Up + Volume Down, plug in USB; the screen stays black.
+
+```bash
+RELEASE=oos9 LAYOUT=dualboot .venv/bin/python restore-android.py
+```
+
+Rebuilds the GPT with the 50/50 split (keeping it if already correct), flashes
+OxygenOS 9 to **both** slots, verifies every partition by read-back, asks
+recovery to format `/data`, and reboots. Several minutes later OxygenOS 9 is
+at its setup wizard on the active slot. Do not finish the wizard; there is
+nothing to set up. Skip this step if the GPT has `linuxroot` and slot b already boots
+OxygenOS 9: `provision.sh` reports `edl: skipped` in that case, and would
+refuse to repartition without positive evidence anyway.
+
+**Step 2 — put Droidian on slot a.** Get the phone into the bootloader: from
+a running OxygenOS with no USB debugging, hold Power + Volume Up + Volume Down
+until it restarts there. From Droidian, `./bin/device-goto fastboot` does it.
+
+```bash
+FORCE=1 BUILD_HOST=taichi ./provision.sh
+```
+
+Builds kernel, adaptation packages, camera and rootfs on the worker, fetches
+them, flashes `boot` + `vbmeta` of the **active** slot and `linuxroot`,
+reboots, and runs
+`verify-device.sh` until it reads `ALL PASS`. The first boot takes about five
+minutes (the initramfs grows a 114 GiB filesystem); later boots take 30 s.
+`FORCE=1` is what makes it rebuild and reflash when the manifest already
+lists everything; without it the run only does what the probe proves is
+missing, which is the right default for every run after this one. Droidian
+lands on whichever slot was active; OxygenOS 9 keeps the other. On the
+reference device that is a = Droidian, b = OxygenOS, as drawn above.
+
+**Step 3 — prove the dual boot.** From Droidian:
+
+```bash
+./bin/device-goto fastboot && fastboot set_active b && timeout 60 fastboot reboot
+```
+
+OxygenOS 9 must reach its setup wizard in about a minute. If it sits on the
+boot animation instead, `userdata` holds a filesystem Android will not accept
+(Android formats nothing on its own): back to the bootloader,
+`fastboot format:ext4 userdata` — **never `fastboot -w`**, which bootloops
+this device — and try again. Then back:
+
+```bash
+fastboot set_active a && timeout 60 fastboot reboot     # from the bootloader
+./droidian/verify-device.sh                              # ALL PASS
+```
+
+**Smaller repairs.** Only the kernel: `PHASE=boot ./provision.sh`. Only the
+rootfs: `PHASE=data FORCE=1 ./provision.sh` (erases the Droidian install, not
+Android's). Droidian boots but something is off: `./droidian/verify-device.sh`
+names the failing invariant. Nothing answers on USB and the screen is black:
+Step 1.
+
+**What this runbook cannot do.** Wake a powered-off phone, or take an
+OxygenOS OTA safely — an OTA writes the *inactive* slot, which is Droidian's
+kernel and vendor. Do not accept updates in OxygenOS 9.
+
 ## The pipeline
 
-The goal is one path that takes the phone from **any** state to dual-boot
-OxygenOS 9 + Droidian, skipping whatever is already correct. Three scripts,
-split by role:
+One path from **any** state to the dual boot, skipping whatever is already
+correct. Three scripts, split by role:
 
 | Script | Runs on | Does | Status |
 |---|---|---|---|
@@ -294,8 +383,8 @@ real LUN size, grows `userdata` to fill it, and recomputes both CRC32s.
 | Droidian camera | working — `droidian/build-camera.sh` fixes the focus mode |
 | Adaptation packages | **built and verified on hardware** — `droidian/adaptation/` |
 | `build.sh` / `provision.sh` pipeline | works |
-| Flash LineageOS | not started |
-| Dual-boot Android + a self-built Linux | GPT layout done; `datapart=` mechanism verified, never applied |
+| Dual-boot OxygenOS 9 + Droidian | **done** — tagged `oos9-stable`, runbook above |
+| LineageOS 20 as the Droidian base | planned — `docs/plans/2026-09-06-los20-port-roadmap.md` |
 
 ## Dual-boot layout
 
@@ -332,13 +421,23 @@ resolves it with `blkid --uuid`, falling back to the label `pmOS_root`. It
 scans every block device, so writing a stock pmOS rootfs to `linuxroot`
 instead of `userdata` just works.
 
+**Droidian needs one token.** The halium initramfs honours `datapart=<path>`
+on the kernel cmdline after its own search for `userdata`, so
+`droidian/packaging/debian/kernel-info.mk` appends
+`datapart=/dev/disk/by-partlabel/linuxroot`. The `/dev/disk/` form is not
+cosmetic: the initramfs's `resize_userdata_if_needed` only grows the
+filesystem to the partition for `/dev/mmcblk*` and `/dev/disk*` paths, and
+the auto-found `/dev/sdaN` matched neither, which is why `/userdata` sat at
+8.8 GB on a 114 GiB partition for the first week.
+
 ```
-fastboot set_active a   → boot_a + system_a + vendor_a   → Android
-fastboot set_active b   → boot_b + linuxroot             → Linux
+fastboot set_active a   → boot_a + vendor_a + linuxroot            → Droidian
+fastboot set_active b   → boot_b + system_b + vendor_b + userdata  → OxygenOS 9
 ```
 
-`system_b` and `odm_b` (3 GiB) go unused, and are available for a second
-Android later.
+`system_a` and `odm_a` (3 GiB) go unused by Droidian (its Android container
+runs Droidian's own GSI image from inside `linuxroot`), and are available for a
+second Android later.
 
 ### Known hazards
 
@@ -346,10 +445,21 @@ Android later.
 - **`LAYOUT=dualboot` is not the default.** Running the restore without it
   rebuilds the stock table and destroys `linuxroot`.
 - **A/B OTAs write the inactive slot.** A stock OxygenOS update installed
-  while on slot A will overwrite `boot_b` — the Linux kernel, though not the
-  rootfs. Expect to re-flash the kernel after an Android update.
-- **AVB.** A custom `boot_b` will not verify against stock `vbmeta`. It needs
-  `fastboot --disable-verity --disable-verification flash vbmeta_b`.
+  while on slot b will overwrite `boot_a` and `vendor_a` — the Droidian kernel
+  and the vendor it depends on, though not `linuxroot`. Do not take OTAs;
+  if one happens, `PHASE=boot ./provision.sh` restores the kernel and
+  `RELEASE=oos9 restore-android.py` the vendor.
+- **AVB.** A custom `boot_a` will not verify against stock `vbmeta`. The
+  Droidian kernel package builds an empty `vbmeta.img` (verification
+  disabled) and `provision.sh` flashes it alongside `boot_a`.
+- **Android formats nothing on its own.** A `userdata` holding any filesystem
+  Android did not make (a Droidian image, say) leaves OxygenOS on the boot
+  animation forever, writing nothing. `fastboot format:ext4 userdata` first.
+- **The halium initramfs carries e2fsprogs 1.43.4 (2017).** Images made by a
+  2025 `mke2fs` have `orphan_file`, which it refuses, so its `e2fsck` and
+  `resize2fs` fail silently while the script logs "resized". `build-rootfs.sh`
+  builds with `-O ^orphan_file` and asserts it; `verify-device.sh` asserts the
+  filesystem actually fills the partition.
 - **No shared storage.** Android's `/data` is `fileencryption=ice`, so Linux
   cannot read it. A shared area would have to be a third partition.
 
