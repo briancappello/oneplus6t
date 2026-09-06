@@ -142,6 +142,14 @@ print('dep_kept=' + str(c.get('target')))
 expect_contains "manifest keys artifacts by output path" /tmp/b-man.$$ 'rootfs_target=rootfs'
 expect_contains "manifest records a source commit"       /tmp/b-man.$$ 'rootfs_commit=True'
 expect_contains "manifest records a sha256"              /tmp/b-man.$$ 'rootfs_sha=True'
+
+# The rootfs is flashed to linuxroot, so the kernel must tell the initramfs to
+# look there. Read from the packaging the way the build does, so an edit that
+# drops the token fails here instead of at the first boot.
+grep '^KERNEL_BOOTIMAGE_CMDLINE = ' "$ROOT/droidian/packaging/debian/kernel-info.mk" \
+    | grep -o 'datapart=[^ ]*' > /tmp/b-cmd.$$
+expect_contains "the kernel cmdline points the initramfs at linuxroot" /tmp/b-cmd.$$ 'datapart=/dev/disk/by-partlabel/linuxroot'
+rm -f /tmp/b-cmd.$$
 # rootfs pulls in camera and adaptation; every target built this run must
 # survive in the manifest, which a per-target file would not have done.
 expect_contains "manifest keeps all targets from one run" /tmp/b-man.$$ 'dep_kept=camera'

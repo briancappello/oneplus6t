@@ -11,7 +11,14 @@ VARIANT = android
 KERNEL_BASE_VERSION = 4.9-113
 
 # The kernel cmdline to use
-KERNEL_BOOTIMAGE_CMDLINE = androidboot.hardware=qcom androidboot.console=ttyMSM0 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true androidboot.usbcontroller=a600000.dwc3 firmware_class.path=/vendor/firmware_mnt/image loop.max_part=7 console=tty0 apparmor=1 security=apparmor droidian.lvm.prefer
+#
+# datapart= is honoured by the halium initramfs (scripts/halium) after its own
+# userdata search. The /dev/disk/ form matters: resize_userdata_if_needed only
+# grows the filesystem to the partition for /dev/mmcblk* and /dev/disk* paths,
+# and the auto-found /dev/sdaN matched neither, which is why /userdata stayed
+# at 8.8 GB on a 114 GiB partition. Android keeps userdata; Droidian owns
+# linuxroot; see docs/plans/2026-09-06-linuxroot.md.
+KERNEL_BOOTIMAGE_CMDLINE = androidboot.hardware=qcom androidboot.console=ttyMSM0 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true androidboot.usbcontroller=a600000.dwc3 firmware_class.path=/vendor/firmware_mnt/image loop.max_part=7 console=tty0 apparmor=1 security=apparmor droidian.lvm.prefer datapart=/dev/disk/by-partlabel/linuxroot
 
 # Slug for the device vendor. This is going to be used in the KERNELRELASE
 # and package names.
