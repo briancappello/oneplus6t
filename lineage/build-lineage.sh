@@ -282,6 +282,20 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
 
     echo ">>> installed local manifest ($(grep -c '<project' "$HERE/local_manifest.xml") pinned projects)"
 
+    # A project dropped from the group set still has to leave the filesystem,
+    # because soong discovers Android.bp by walking the tree. repo will not do
+    # it once the checkout is dirty -- it stops the whole sync with "cts: Cannot
+    # remove project: uncommitted changes are present" -- and building once
+    # leaves generated files behind, so the second run is always the dirty one.
+    #
+    # Removed directly rather than with repo's --force-remove-dirty, which would
+    # apply to every project at once and silently discard hand edits elsewhere
+    # in the tree. The group exclusion is what stops it coming back.
+    if [ -d "$WORK/cts" ]; then
+        echo ">>> removing cts/ (excluded via --groups, repo cannot delete it while dirty)"
+        rm -rf "$WORK/cts"
+    fi
+
     echo ">>> repo sync -j$SYNC_JOBS (hours, ~200 GB)"
     # repo calls isatty() and suppresses its progress bar completely when stdout
     # is a file -- which is exactly what the `setsid nohup ... > log` launch this
