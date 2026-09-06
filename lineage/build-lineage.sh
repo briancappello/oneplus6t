@@ -39,7 +39,9 @@ WORK="${LINEAGE_WORK:-$HOME/lineage20}"
 SYNC_JOBS="${SYNC_JOBS:-8}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
 MIN_FREE_GB="${MIN_FREE_GB:-300}"
-CCACHE_GB="${CCACHE_GB:-50}"
+# 100 GB, not 50: Phase 3 rebuilds this kernel repeatedly and the C/C++ half of
+# the tree is what ccache actually accelerates. Cheap against 585 GB free.
+CCACHE_GB="${CCACHE_GB:-100}"
 
 IMAGE_TAG="lineage20-build:fajita"
 
@@ -108,8 +110,12 @@ in_container() {
     # An explicit large number rather than "unlimited": podman and docker
     # disagree on whether 0 or -1 means unlimited, and 32768 is unambiguous to
     # both while still far below the host's 375354.
+    # 63 MB is podman's default /dev/shm and nobody chose it. Java tooling and
+    # some AOSP host binaries use shared memory, and the last default we left
+    # unexamined surfaced at 96% of a multi-hour build.
     "$RT" run --rm -i \
         --pids-limit=32768 \
+        --shm-size=2g \
         $(id_args) \
         -v "$WORK":/aosp:z \
         -e HOME=/aosp/.home \
