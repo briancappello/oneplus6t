@@ -82,9 +82,16 @@ git -C "$KERNEL_DIR" checkout -q "$KERNEL_COMMIT"
 echo ">>> kernel at $(git -C "$KERNEL_DIR" rev-parse --short HEAD) ($(git -C "$KERNEL_DIR" describe --tags --always 2>/dev/null))"
 
 echo ">>> applying fajita packaging overlay"
-cp -v "$HERE/packaging/debian/"* "$KERNEL_DIR/debian/" 2>/dev/null | sed 's/^/    /' || true
+# The LineageOS tree has no debian/ at all (the junocomp tree did). mkdir
+# must come BEFORE the copy, and the copy must be allowed to fail loudly:
+# the previous `2>/dev/null ... || true` turned "destination directory does
+# not exist" into a silent no-op, and the build then died an hour later in
+# releng-build-changelog with "Unable to find debian/control".
 mkdir -p "$KERNEL_DIR/debian/source"
+cp -v "$HERE/packaging/debian/"* "$KERNEL_DIR/debian/" | sed 's/^/    /'
 cp "$HERE/packaging/debian/source/format" "$KERNEL_DIR/debian/source/format"
+[ -f "$KERNEL_DIR/debian/control" ] \
+    || { echo "packaging overlay did not land: no debian/control in $KERNEL_DIR" >&2; exit 1; }
 cp -v "$HERE/packaging/arch/arm64/configs/fajita_defconfig" \
       "$KERNEL_DIR/arch/arm64/configs/fajita_defconfig" | sed 's/^/    /'
 # regenerated from git history by releng-build-changelog; a stale one breaks it

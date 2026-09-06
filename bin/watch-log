@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# watch-log — follow a detached run's log and return the moment it fails,
+# finishes, or stalls. Never silent: prints a heartbeat on a healthy run.
+#
+#   bin/watch-log <logfile> [--done REGEX] [--fail REGEX] [--max MIN] [--stall SEC]
+#
+#   bin/watch-log ~/kernel-build.log \
+#       --done '^>>> done\.' \
+#       --fail 'Exception:|^E: |dpkg-buildpackage: error|\*\*\* \[|FAILED TO APPLY|kernel tree is not at'
+#
+# Exit: 0 done-pattern seen, 1 fail-pattern seen, 2 stalled, 3 gave up at --max.
+#
+# WHY this exists, in the form of the bugs it replaces. Every ad hoc monitor
+# written for this project failed one of these:
+#
+#   * `sleep N; tail` -- a failure at second 3 is noticed at second N.
+#     Fix: poll every few seconds, judge on every poll.
+#   * `pgrep -f <script> | grep -v $$` -- $$ is the outer shell, not the ssh
+#     command whose own argv contains the script name, so the process count
+#     never reaches zero and "exited" is never reported.
+#     Fix: do not test liveness by process name at all. Judge the LOG: a
+#     done-pattern, a fail-pattern, or the log not growing for --stall
+#     seconds. All three are observable without knowing what is running.
+#   * A fail regex written from memory of what errors "usually" look like,
+#     which then had zero hits on `Exception: Unable to find debian/control`.
+#     Fix: --fail is an argument the caller sets from the tool being run,
+#     and the STALL detector catches anything the regex missed: a build that
+#     died still stops writing.
+#   * Reporting only at the end, so healthy and wedged looked identical.
+#     Fix: heartbeat with the log's last meaningful line every --beat sec.
+
+set -uo pipefail
+
+LOG="${1:?usage: watch-log <logfile> [--done RE] [--fail RE] [--max MIN] [--stall SEC]}"; shift
+DONE_RE='^>>> done|build completed successfully|^ALL PASS'
+FAIL_RE='Exception:|^E: |dpkg-buildpackage: error|\*\*\* \[|error: |FAILED|fatal:|Traceback'
+MAX_MIN=60; STALL_SEC=300; BEAT_SEC=60; POLL_SEC=5
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --done)  DONE_RE="$2"; shift 2 ;;
+        --fail)  FAIL_RE="$2"; shift 2 ;;
+        --max)   MAX_MIN="$2"; shift 2 ;;
+        --stall) STALL_SEC="$2"; shift 2 ;;
+        --beat)  BEAT_SEC="$2"; shift 2 ;;
+        *) echo "watch-log: unknown option $1" >&2; exit 64 ;;
+    esac
+done
+
+# Progress bars use \r; unwind so tail/grep see lines.
+lines() { tr '\r' '\n' < "$LOG" 2>/dev/null; }
+last_line() { lines | grep -avE '^\s*$' | tail -1 | cut -c1-110; }
+
+start=$(date +%s); deadline=$((start + MAX_MIN * 60))
+next_beat=$start; last_size=-1; last_growth=$start
+
+while :; do
+    now=$(date +%s)
+    if lines | grep -qaE "$FAIL_RE"; then
+        echo "=== FAILED after $(( (now - start) / 60 ))m ==="
+        lines | grep -aE "$FAIL_RE" | head -8 | cut -c1-160
+        exit 1
+    fi
+    if lines | grep -qaE "$DONE_RE"; then
+        echo "=== DONE after $(( (now - start) / 60 ))m ==="
+        lines | grep -aE "$DONE_RE" | tail -1 | cut -c1-160
+        exit 0
+    fi
+    size=$(stat -c%s "$LOG" 2>/dev/null || echo 0)
+    if [ "$size" != "$last_size" ]; then last_size=$size; last_growth=$now; fi
+    if [ $((now - last_growth)) -ge "$STALL_SEC" ]; then
+        echo "=== STALLED: log unchanged for ${STALL_SEC}s (no done/fail pattern matched) ==="
+        lines | tail -6 | cut -c1-160
+        exit 2
+    fi
+    if [ "$now" -ge "$next_beat" ]; then
+        printf '    [%3dm] %s\n' "$(( (now - start) / 60 ))" "$(last_line)"
+        next_beat=$((now + BEAT_SEC))
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+        echo "=== still running at ${MAX_MIN}m: $(last_line) ==="
+        exit 3
+    fi
+    sleep "$POLL_SEC"
+done
