@@ -140,8 +140,15 @@ $(runtime) run --rm \
 
 # Publish the .config the build actually used, so kernel-config-check.sh can
 # assert the Halium delta held rather than trusting that olddefconfig kept
-# every line. `|| true`: a missing copy must not fail a build that succeeded.
-cp "$KERNEL_DIR/.config" "$OUT_DIR/config-$KVER-oneplus-fajita" 2>/dev/null || true
+# every line. The snippet builds out of tree (O=out/KERNEL_OBJ), so that is
+# where it lives -- not the tree root, which is where a first version looked
+# with a `|| true` that hid the miss. A build whose config cannot be
+# published cannot be checked, so this is fatal.
+cfg="$KERNEL_DIR/out/KERNEL_OBJ/.config"
+[ -f "$cfg" ] || { echo "built .config not found at $cfg" >&2; exit 1; }
+cp "$cfg" "$OUT_DIR/config-$KVER-oneplus-fajita"
+"$HERE/kernel-config-check.sh" "$HERE/packaging/arch/arm64/configs/halium.delta" \
+    "$OUT_DIR/config-$KVER-oneplus-fajita" | sed 's/^/    /'
 
 echo ">>> extracting images"
 IMAGES="$OUT_DIR/images"
