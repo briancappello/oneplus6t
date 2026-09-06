@@ -257,25 +257,21 @@ phase_sync() {
     # prebuilts are LFS objects -- but it is enabled by having the git-lfs binary
     # in the image, which the Containerfile installs, not by this flag.
     #
-    # --groups=default,-cts excludes the CTS suite. LineageOS's manifest ships
-    # `cts` (LineageOS/android_cts) but NOT tools/tradefederation/core or
-    # test/suite_harness, so cts-tradefed and cts-shim-host-lib are defined
-    # nowhere in the tree. soong parses Android.bp by walking the filesystem,
-    # not the manifest, so merely leaving those projects unsynced is not enough
-    # -- the cts directory must not exist at all, or bootstrap dies with:
-    #   "CtsApexTestCases" depends on undefined module "cts-tradefed"
+    # Full default groups. An earlier version passed --groups=default,-cts to
+    # drop the CTS suite, whose cts-tradefed dependency LineageOS does not ship.
+    # That was wrong: the `cts` GROUP is not just the cts project. It also
+    # contains platform_testing and tools/trebuchet, and tools/trebuchet defines
+    # jsonlib, which frameworks/base/tools/protologtool genuinely needs. The
+    # build then died 6 minutes in with "module protologtool-lib missing
+    # dependencies: jsonlib".
     #
-    # The usual workaround is ALLOW_MISSING_DEPENDENCIES=true, deliberately NOT
-    # used here: it downgrades EVERY missing dependency to a warning and
-    # silently disables the module. On a device port that is precisely the
-    # signal we need to stay loud -- a missing vendor blob or HAL must fail the
-    # build, not quietly vanish from the image. Excluding one unbuildable test
-    # suite keeps strict dependency checking for everything that matters.
+    # The missing CTS modules are handled where they belong, with
+    # ALLOW_MISSING_DEPENDENCIES in phase_build, rather than by removing
+    # projects that carry real build dependencies alongside test code.
     in_container "repo init \
         -u '$MANIFEST_URL' \
         -b '$MANIFEST_REV' \
         --repo-rev='$REPO_REV' \
-        --groups='default,-cts' \
         --no-clone-bundle"
 
     # The local manifest must be in place BEFORE the sync, or the device,
@@ -295,20 +291,6 @@ xml.dom.minidom.parse('/aosp/.repo/local_manifests/fajita.xml')\"" \
              exit 1; }
 
     echo ">>> installed local manifest ($(grep -c '<project' "$HERE/local_manifest.xml") pinned projects)"
-
-    # A project dropped from the group set still has to leave the filesystem,
-    # because soong discovers Android.bp by walking the tree. repo will not do
-    # it once the checkout is dirty -- it stops the whole sync with "cts: Cannot
-    # remove project: uncommitted changes are present" -- and building once
-    # leaves generated files behind, so the second run is always the dirty one.
-    #
-    # Removed directly rather than with repo's --force-remove-dirty, which would
-    # apply to every project at once and silently discard hand edits elsewhere
-    # in the tree. The group exclusion is what stops it coming back.
-    if [ -d "$WORK/cts" ]; then
-        echo ">>> removing cts/ (excluded via --groups, repo cannot delete it while dirty)"
-        rm -rf "$WORK/cts"
-    fi
 
     echo ">>> repo sync -j$SYNC_JOBS (hours, ~200 GB)"
     # repo calls isatty() and suppresses its progress bar completely when stdout
