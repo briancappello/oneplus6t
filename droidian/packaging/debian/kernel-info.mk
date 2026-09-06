@@ -179,14 +179,34 @@ BUILD_CLANG_TRIPLET = aarch64-linux-gnu-
 # The compiler to use. Recent Android kernels are built with clang.
 BUILD_CC = clang
 
+# Use the LLVM toolchain end to end: kernel-snippet.mk turns this into
+# LLVM=1 LLVM_IAS=1, and this 4.9.337 tree's Makefile then selects ld.lld,
+# llvm-ar/nm/objcopy/objdump and clang's integrated assembler. It is NOT
+# optional here: without LLVM_IAS=1 the Makefile passes -no-integrated-as
+# and shells out to $(CROSS_COMPILE)as, and the only android-prefixed `as`
+# in the Droidian repos is the binutils-2.27-era one from the gcc-4.9
+# bundle, which rejects the directives clang 14 emits ("junk at end of
+# line" in the vdso). LineageOS's own build of this tree is LLVM-native.
+BUILD_LLVM = 1
+
 # Extra paths to prepend to the PATH variable. You'll probably want
 # to specify the clang path here (the default).
 BUILD_PATH = /usr/lib/llvm-android-14.0-r450784d/bin
 
 # Extra packages to add to the Build-Depends section. Mainline builds
 # can have this section empty, unless cross-building.
-# The default is enough to install the Android toolchain, including clang.
-DEB_TOOLCHAIN = linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, binutils-gcc4.9-aarch64-linux-android, clang-android-14.0-r450784d
+#
+# Deliberately NO gcc-4.9 / binutils-gcc4.9-aarch64-linux-android: with
+# BUILD_LLVM=1 the kernel uses ld.lld and clang's integrated assembler, so
+# the android-prefixed GNU tools are never invoked. They were re-added once
+# to satisfy "aarch64-linux-android-ld: not found", which only appeared
+# because LLVM was not yet enabled; their `as` then failed on clang 14's
+# output. binutils-aarch64-linux-gnu stays for the halium packaging
+# scripts, which call the -gnu- prefixed objcopy on the host side.
+#
+# This exact list ALSO appears inline in debian/control Build-Depends.
+# build-kernel.sh asserts they match; edit both.
+DEB_TOOLCHAIN = linux-initramfs-halium-generic:arm64, binutils-aarch64-linux-gnu, clang-android-14.0-r450784d
 
 # Where we're building on
 DEB_BUILD_ON = amd64
