@@ -31,6 +31,8 @@ INTERVAL="${INTERVAL:-15}"
 MAX_MINUTES="${MAX_MINUTES:-30}"
 HEARTBEAT="${HEARTBEAT:-60}"
 IMAGE_TAG="${IMAGE_TAG:-lineage20-build:fajita}"
+GONE_POLLS="${GONE_POLLS:-3}"   # consecutive no-container polls before "stopped"
+gone=0
 
 RT="$(command -v podman >/dev/null && echo podman || echo docker)"
 
@@ -98,10 +100,20 @@ while :; do
     fi
     # Filtered to OUR image: a plain `podman ps -q` counts any container on the
     # box, so an unrelated one makes a dead build look alive.
+    #
+    # Debounced: each phase is its own `podman run`, so between sync's container
+    # exiting and build's starting there are a few seconds with NO container.
+    # One sample landing in that gap declared a healthy build failed. Require
+    # the absence to persist across consecutive polls before believing it.
     if [ -z "$("$RT" ps --filter "ancestor=$IMAGE_TAG" -q 2>/dev/null)" ]; then
-        echo "=== work stopped, $(progress) ==="
-        report_outcome
-        exit $?
+        gone=$((gone + 1))
+        if [ "$gone" -ge "$GONE_POLLS" ]; then
+            echo "=== work stopped, $(progress) ==="
+            report_outcome
+            exit $?
+        fi
+    else
+        gone=0
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
         echo "=== still running after ${MAX_MINUTES}m: $(progress) ==="
