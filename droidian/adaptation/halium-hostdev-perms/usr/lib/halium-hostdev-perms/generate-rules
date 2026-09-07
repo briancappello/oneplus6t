@@ -19,7 +19,10 @@
 # Writes to stdout. Environment overrides exist so this is testable offline.
 set -uo pipefail
 
-UEVENTD_FILES="${HHP_UEVENTD_FILES:-/android/vendor/ueventd.rc /android/ueventd.rc}"
+# Vendor files first (first declaration wins), then the system one. Android 9
+# put them at /vendor/ueventd.rc and /ueventd.rc; Android 10+ at
+# /vendor/etc/ueventd.rc and /system/etc/ueventd.rc. Absent ones are skipped.
+UEVENTD_FILES="${HHP_UEVENTD_FILES:-/android/vendor/ueventd.rc /android/vendor/etc/ueventd.rc /android/ueventd.rc /android/system/etc/ueventd.rc}"
 TARGET_USER="${HHP_TARGET_USER:-droidian}"
 
 # ueventd.rc declares many nodes as globs -- 33 of 264 on fajita, including

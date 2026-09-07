@@ -1,5 +1,5 @@
 Package: halium-hostdev-perms
-Version: 1.0.0
+Version: 1.1.0
 Architecture: all
 Maintainer: oneplus6t <https://github.com/briancappello/oneplus6t>
 Depends: udev

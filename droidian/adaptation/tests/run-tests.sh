@@ -287,6 +287,22 @@ n=$(grep -c vendor-build.prop "$aof/config")
     || { echo "  FAIL  config bind lines are not duplicated: $n"; fail=$((fail+1)); }
 rm -rf "$aof" /tmp/aof-1.$$ /tmp/aof-2.$$
 
+# Android 13 keeps ueventd.rc at /system/etc/ (the api28 GSI had it at /), and
+# the vendor may use /vendor/etc/. The default list must name every layout and
+# an absent file in it must be skipped, not fatal: on the first api33 boot the
+# unit's ConditionPathExists=/android/ueventd.rc was unmet and touch never got
+# its permissions.
+grep -q 'ConditionPathExists=|/android/system/etc/ueventd.rc' \
+    "$ADAPT/halium-hostdev-perms/usr/lib/systemd/system/halium-hostdev-perms.service" \
+    && { echo "  PASS  unit also triggers on the Android 13 ueventd.rc path"; pass=$((pass+1)); } \
+    || { echo "  FAIL  unit also triggers on the Android 13 ueventd.rc path"; fail=$((fail+1)); }
+grep -q 'HHP_UEVENTD_FILES:-.*/android/system/etc/ueventd.rc' "$GEN" \
+    && { echo "  PASS  generator reads the Android 13 ueventd.rc path by default"; pass=$((pass+1)); } \
+    || { echo "  FAIL  generator reads the Android 13 ueventd.rc path by default"; fail=$((fail+1)); }
+HHP_UEVENTD_FILES="$FIX/vendor-ueventd.rc /nonexistent/ueventd.rc $FIX/ueventd.rc" "$GEN" > /tmp/hhp-skip.$$ 2>&1
+expect_contains "an absent ueventd.rc in the list is skipped, the rest is read" /tmp/hhp-skip.$$ 'KERNEL=="hwbinder"'
+rm -f /tmp/hhp-skip.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

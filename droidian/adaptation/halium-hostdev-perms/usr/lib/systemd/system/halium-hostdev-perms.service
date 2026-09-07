@@ -5,7 +5,10 @@ Documentation=https://github.com/briancappello/oneplus6t
 After=android-mount.service
 # Must finish before anything opens the nodes.
 Before=lxc@android.service
-ConditionPathExists=/android/ueventd.rc
+# Android 9 kept the system ueventd.rc at /; Android 10+ moved it to
+# /system/etc/. Either one is the trigger.
+ConditionPathExists=|/android/ueventd.rc
+ConditionPathExists=|/android/system/etc/ueventd.rc
 
 [Service]
 Type=oneshot
