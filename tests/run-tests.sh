@@ -329,6 +329,14 @@ expect_pred "boot runs when the device cannot be read" \
 printf 'state=fastboot\nprobe_complete=no\n' > /tmp/pr-noslot.$$
 expect_pred "boot runs when the slot is unknown" \
     run skip_boot /tmp/pr-noslot.$$ "$MAN"
+# In fastboot the slot IS known but the partition cannot be read over SSH;
+# trying anyway cost ~100 s of ssh retries per provisioning run.
+printf 'state=fastboot\nprobe_complete=no\nslot=b\n' > /tmp/pr-fbslot.$$
+: > /tmp/hw-fbslot.$$
+HW_LOG=/tmp/hw-fbslot.$$ FAKE_SSH_OUT='aaaa  -' expect_pred "boot runs, without ssh, when the phone is in fastboot" \
+    run skip_boot /tmp/pr-fbslot.$$ "$MAN"
+expect_absent "no ssh attempt was made from fastboot" /tmp/hw-fbslot.$$ 'device-ssh'
+rm -f /tmp/pr-fbslot.$$ /tmp/hw-fbslot.$$
 
 # skip_edl inverts the usual polarity: only positive evidence that linuxroot is
 # missing may trigger a repartition, because running it erases the device.

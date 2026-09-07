@@ -63,6 +63,9 @@ skip_boot() {
 
     slot=$(grep '^slot=' "$probe" | cut -d= -f2)
     [ -z "$slot" ] || [ "$slot" = "unknown" ] && return 1
+    # The partition is read over SSH, which only exists in a booted Droidian.
+    # From fastboot the slot is known but every ssh try just times out.
+    [ "$(grep '^state=' "$probe" | cut -d= -f2)" = droidian ] || return 1
 
     # Expected hash and size of the image we would flash.
     read -r want bytes <<<"$(MAN="$manifest" python3 - <<'PY'
