@@ -359,7 +359,7 @@ rm -f /tmp/pr-act.$$
 # Skip detection: data phase skips when package versions match. One build target
 # ships several packages -- adaptation alone ships three -- so every .deb in the
 # manifest has to be accounted for, not one representative per target.
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-data-match.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\npkg_android-system-gsi-33=13.0.0\n' > /tmp/pr-data-match.$$
 if skip_data /tmp/pr-data-match.$$ "$ROOT/tests/fixtures/manifest.json"; then
     echo "  PASS  data phase skips when versions match"; pass=$((pass+1))
 else
@@ -373,6 +373,21 @@ if skip_data /tmp/pr-data-diff.$$ "$ROOT/tests/fixtures/manifest.json"; then
 else
     echo "  PASS  data phase runs when version differs"; pass=$((pass+1))
 fi
+
+# Skip detection: the container GSI is a package the device must already
+# have. An api33 image with the same adaptation and camera versions as the
+# api28 install on the phone must NOT be skipped; the .debs cannot tell them
+# apart, the android-system-gsi package can.
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\npkg_android-system-gsi-28=9.0.0\n' > /tmp/pr-data-gsi28.$$
+expect_pred "data runs when the device carries a different GSI package" run \
+    skip_data /tmp/pr-data-gsi28.$$ "$ROOT/tests/fixtures/manifest.json"
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\npkg_android-system-gsi-33=13.0.0\n' > /tmp/pr-data-gsi33.$$
+expect_pred "data skips when the GSI package and version match" skip \
+    skip_data /tmp/pr-data-gsi33.$$ "$ROOT/tests/fixtures/manifest.json"
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\npkg_android-system-gsi-33=13.0.1\n' > /tmp/pr-data-gsi33v.$$
+expect_pred "data runs when the GSI version differs" run \
+    skip_data /tmp/pr-data-gsi33v.$$ "$ROOT/tests/fixtures/manifest.json"
+rm -f /tmp/pr-data-gsi28.$$ /tmp/pr-data-gsi33.$$ /tmp/pr-data-gsi33v.$$
 
 # A second package from the same target, missing on the device, must still stop
 # the skip: checking one .deb per target would have called this a match.
@@ -408,7 +423,7 @@ mkdir -p /tmp/artifacts-test/droidian
 printf 'sparse rootfs fixture\n' > /tmp/artifacts-test/droidian/linuxroot.simg   # the bytes the fixture manifest describes
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-move.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-move.$$ 2>&1; rc=$?
 expect_contains "data runs when the install is still on userdata" /tmp/p-move.$$ 'data: installing rootfs'
-printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\n' > /tmp/pr-stay.$$
+printf 'state=droidian\nprobe_complete=yes\nvendor_fp=x\ndata_part=linuxroot\npkg_droidian-camera=1.0.0\npkg_adaptation-oneplus-fajita=1.0.0\npkg_halium-hostdev-perms=1.0.0\npkg_android-system-gsi-33=13.0.0\n' > /tmp/pr-stay.$$
 timeout 10 "$PROV" --yes --artifacts /tmp/artifacts-test --probe-file /tmp/pr-stay.$$ --manifest "$ROOT/tests/fixtures/manifest.json" --phase data > /tmp/p-stay.$$ 2>&1; rc=$?
 expect_contains "data skips once the install is on linuxroot" /tmp/p-stay.$$ 'data: skipped'
 # FORCE=1 rebuilt the image, so it must also be flashed: the device's package

@@ -26,7 +26,7 @@ device_state() {
 
 ssh_blob() {
     [ -n "${PROBE_SSH_FIXTURE:-}" ] && { cat "$PROBE_SSH_FIXTURE"; return; }
-    device-ssh -r 'grep -E "^ro\.(build\.fingerprint|oxygen\.version)" /vendor/build.prop /system/build.prop 2>/dev/null; echo ---; dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita droidian-camera 2>/dev/null | grep "^ii"; echo "--- slot"; sed -n "s/.*androidboot\.slot_suffix=_\?\([ab]\).*/\1/p" /proc/cmdline; echo "--- datapart"; lsblk -no PARTLABEL "$(findmnt -no SOURCE /userdata 2>/dev/null)" 2>/dev/null; echo "--- partlabels"; ls /dev/disk/by-partlabel/ 2>/dev/null' 2>/dev/null
+    device-ssh -r 'grep -E "^ro\.(build\.fingerprint|oxygen\.version)" /vendor/build.prop /system/build.prop 2>/dev/null; echo ---; dpkg -l halium-hostdev-perms halium-oldkernel-compat adaptation-oneplus-fajita droidian-camera "android-system-gsi-*" 2>/dev/null | grep "^ii"; echo "--- slot"; sed -n "s/.*androidboot\.slot_suffix=_\?\([ab]\).*/\1/p" /proc/cmdline; echo "--- datapart"; lsblk -no PARTLABEL "$(findmnt -no SOURCE /userdata 2>/dev/null)" 2>/dev/null; echo "--- partlabels"; ls /dev/disk/by-partlabel/ 2>/dev/null' 2>/dev/null
 }
 
 fb_blob() {

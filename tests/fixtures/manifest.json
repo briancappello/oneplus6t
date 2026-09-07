@@ -15,6 +15,10 @@
       "sha256": "a79029d1e6689be1648d4bee1e69aaf70fee91c1d9aee2d613f36033e842908b",
       "bytes": 22, "repo_commit": "cafe123", "source_commit": "cafe123"
     },
+    "droidian/linuxroot.gsi": {
+      "target": "rootfs", "version": "android-system-gsi-33 13.0.0",
+      "sha256": "ffff", "bytes": 30, "repo_commit": "cafe123", "source_commit": "cafe123"
+    },
     "droidian/out-camera/droidian-camera_1.0.0_arm64.deb": {
       "target": "camera", "version": "1.0.0", "sha256": "cccc",
       "bytes": 1, "repo_commit": "cafe123", "source_commit": "cafe123"

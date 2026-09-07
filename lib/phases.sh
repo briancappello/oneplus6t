@@ -113,11 +113,16 @@ except Exception:
     sys.exit(0)
 for path, art in doc.get("artifacts", {}).items():
     base = os.path.basename(path)
+    version = art.get("version") or ""
+    if base.endswith(".gsi"):
+        # "<package> <version>": the container image, compared like a .deb.
+        if len(version.split()) == 2:
+            print(version)
+        continue
     if not base.endswith(".deb"):
         continue
     # name_VERSION_arch.deb
     name = base.split("_")[0]
-    version = art.get("version") or ""
     if name and version:
         print("%s %s" % (name, version))
 PY

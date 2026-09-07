@@ -29,7 +29,7 @@ TARGETS=(
   "kernel||droidian/out/images/boot.img droidian/out/images/vbmeta.img|kernel|droidian/build-kernel.sh"
   "camera||droidian/out-camera|camera|droidian/build-camera.sh"
   "adaptation||droidian/out-adaptation|adaptation|droidian/adaptation/build-adaptation.sh"
-  "rootfs|camera adaptation|droidian/linuxroot.img droidian/linuxroot.simg|droidian|droidian/build-rootfs.sh"
+  "rootfs|camera adaptation|droidian/linuxroot.img droidian/linuxroot.simg droidian/linuxroot.gsi|droidian|droidian/build-rootfs.sh"
 )
 
 list_targets() {
@@ -226,9 +226,13 @@ write_manifest() {
         local sc; sc="$(source_commit "$(target_tree "$t")")"
         while read -r f; do
             [ -n "$f" ] || continue
-            # name_VERSION_arch.deb -> VERSION; empty for images.
+            # name_VERSION_arch.deb -> VERSION; a .gsi sidecar IS its version
+            # ("<package> <version>" of the container image); empty for images.
             ver=""
-            case "$f" in *_*_*.deb) ver="$(basename "$f" | cut -d_ -f2)" ;; esac
+            case "$f" in
+                *_*_*.deb) ver="$(basename "$f" | cut -d_ -f2)" ;;
+                *.gsi)     ver="$(tr -d '\n' < "$OUT/$f")" ;;
+            esac
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
                 "$f" "$t" "$(sha256sum "$OUT/$f" | cut -d' ' -f1)" \
                 "$(stat -c%s "$OUT/$f")" "$sc" "$ver"
