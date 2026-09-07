@@ -15,6 +15,7 @@ droidian/camera-src/
 droidian/kernel/
 droidian/linuxroot.img
 droidian/linuxroot.simg
+droidian/linuxroot.gsi
 droidian/linuxroot.simg.part
 droidian/local-repo/
 droidian/out/

@@ -30,10 +30,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$HERE")"
 DOWNLOADS="$ROOT/downloads"
 
-# Droidian ships a generic rootfs per Android API level. api28 = Android 9,
-# which is what OxygenOS 9.0.17 gives us and what Droidian requires on the 6T.
-API="${API:-28}"
+# Droidian ships a generic rootfs per Android API level. api33 = Android 13,
+# the LineageOS 20 base on slot b (docs/plans/2026-09-06-los20-port-roadmap.md,
+# Phase 4). api28 was the OxygenOS 9.0.17 era and is history on main.
+API="${API:-33}"
 RELEASE_REPO="droidian-images/droidian"
+# The nightly release also carries per-device zips (volla_mimir-api33, ...).
+# Match the generic rootfs by its full stem, never by the api substring.
+ROOTFS_STEM="droidian-OFFICIAL-phosh-phone-rootfs-api${API}-arm64"
 # The inner rootfs.img is grown here, at build time, because the Droidian
 # rootfs ships no e2fsprogs to grow it on the device. 100G is SPARSE: only the
 # ~4.5 GB of real data occupies blocks, and mke2fs -d keeps the holes when it
@@ -66,9 +70,9 @@ import json,sys
 rs=json.load(sys.stdin)
 for r in rs:
     for a in r['assets']:
-        if 'rootfs-api${API}' in a['name'] and a['name'].endswith('.zip'):
+        if a['name'].startswith('${ROOTFS_STEM}') and a['name'].endswith('.zip'):
             print(a['name'], a['browser_download_url']); raise SystemExit
-raise SystemExit('no api${API} rootfs asset found')
+raise SystemExit('no ${ROOTFS_STEM}*.zip asset found')
 ")
     echo "    $name"
     zip="$DOWNLOADS/$name"
@@ -80,6 +84,15 @@ raise SystemExit('no api${API} rootfs asset found')
     fi
 fi
 unzip -tq "$zip" >/dev/null || { echo "zip is corrupt: $zip" >&2; exit 1; }
+
+# build-rootfs.sh reimplements the zip's setup.sh offline (resize to 8G,
+# symlink android-rootfs.img into /data). If upstream changes that script,
+# the reimplementation is silently wrong. Assert the two lines it mirrors.
+setup=$(unzip -p "$zip" setup.sh)
+grep -q 'resize2fs -f /data/rootfs.img 8G' <<<"$setup" ||
+    { echo "ABORT: setup.sh no longer resizes rootfs.img to 8G; re-read it" >&2; exit 1; }
+grep -q 'ln -s /halium-system/var/lib/lxc/android/android-rootfs.img /data/android-rootfs.img' <<<"$setup" ||
+    { echo "ABORT: setup.sh no longer symlinks android-rootfs.img; re-read it" >&2; exit 1; }
 
 # ---------------------------------------------------------------- extract
 say "extracting rootfs.img"
@@ -195,6 +208,20 @@ fusermount3 -u /mnt/rootfs
     done
     say "adaptation packages verified present in rootfs.img"
 fi
+
+# ---------------------------------------------------------------- identity
+# Which Android container this image carries. The pipeline compares this
+# against the device (lib/phases.sh skip_data via lib/probe.sh): the .debs
+# alone cannot tell an api28 image from an api33 one.
+GSI="$HERE/linuxroot.gsi"
+debugfs -R 'cat /var/lib/dpkg/status' "$STAGE/rootfs.img" 2>/dev/null |
+    awk '/^Package: android-system-gsi-/{p=$2} /^Version: /{v=$2} /^$/{if(p){print p, v; exit}}' > "$GSI"
+[ -s "$GSI" ] || { echo "ABORT: no android-system-gsi-* package in rootfs.img" >&2; exit 1; }
+say "container: $(cat "$GSI")"
+case "$(cat "$GSI")" in
+    "android-system-gsi-$API "*) ;;
+    *) echo "ABORT: image carries $(cut -d' ' -f1 "$GSI") but API=$API was requested" >&2; exit 1 ;;
+esac
 
 # ---------------------------------------------------------------- pack
 # The image is 9 GiB inside a 114 GiB partition. The halium initramfs grows
