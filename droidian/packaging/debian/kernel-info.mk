@@ -30,7 +30,14 @@ KERNEL_BASE_VERSION = 4.9-337
 # DT that is the difference, not the bootloader. They are also redundant:
 # fajita_defconfig makes AppArmor the compiled-in default LSM
 # (DEFAULT_SECURITY="apparmor"), which is what those tokens selected.
-KERNEL_BOOTIMAGE_CMDLINE = androidboot.hardware=qcom androidboot.console=ttyMSM0 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true androidboot.usbcontroller=a600000.dwc3 firmware_class.path=/vendor/firmware_mnt/image loop.max_part=7 console=tty0 droidian.lvm.prefer datapart=/dev/disk/by-partlabel/linuxroot
+#
+# androidboot.selinux=permissive: Android 13's init loads the vendor policy
+# and calls setenforce(1) unless the cmdline says otherwise; the kernel is
+# SELINUX_DEVELOP=y so that switch would land, on a host where nothing is
+# labelled. Verified against the LineageOS 20 dtbo's bootloader with the
+# Phase 3 bisect method before it went in, and LineageOS itself reports
+# Permissive with it (docs/plans/2026-09-06-los20-userland.md, Task 4).
+KERNEL_BOOTIMAGE_CMDLINE = androidboot.hardware=qcom androidboot.console=ttyMSM0 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true androidboot.usbcontroller=a600000.dwc3 firmware_class.path=/vendor/firmware_mnt/image loop.max_part=7 console=tty0 droidian.lvm.prefer datapart=/dev/disk/by-partlabel/linuxroot androidboot.selinux=permissive
 
 # Slug for the device vendor. This is going to be used in the KERNELRELASE
 # and package names.
