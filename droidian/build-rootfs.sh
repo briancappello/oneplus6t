@@ -215,7 +215,9 @@ fi
 # alone cannot tell an api28 image from an api33 one.
 GSI="$HERE/linuxroot.gsi"
 debugfs -R 'cat /var/lib/dpkg/status' "$STAGE/rootfs.img" 2>/dev/null |
-    awk '/^Package: android-system-gsi-/{p=$2} /^Version: /{v=$2} /^$/{if(p){print p, v; exit}}' > "$GSI"
+    awk '/^Package: android-system-gsi-/{p=$2} /^Version: /{v=$2} /^$/{if(p && !done){print p, v; done=1} p=""}' > "$GSI"
+# (no `exit` in that awk: closing the pipe early gives debugfs SIGPIPE, and
+# under pipefail that ends the script with no message at all)
 [ -s "$GSI" ] || { echo "ABORT: no android-system-gsi-* package in rootfs.img" >&2; exit 1; }
 say "container: $(cat "$GSI")"
 case "$(cat "$GSI")" in
