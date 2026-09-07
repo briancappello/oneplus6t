@@ -62,23 +62,30 @@ fi
 #
 # Nothing here wants the bridge. The android container is configured
 # lxc.net.0.type = none. Measured: lxc-containers start 30.29s -> 0.044s.
-LXC_NET_DEFAULTS=/etc/default/lxc-net
+LXC_NET_DEFAULTS="${AOF_LXC_NET_DEFAULTS:-/etc/default/lxc-net}"
 if [ -f "$LXC_NET_DEFAULTS" ] && grep -q '^USE_LXC_BRIDGE="true"' "$LXC_NET_DEFAULTS"; then
     sed -i 's/^USE_LXC_BRIDGE="true"/USE_LXC_BRIDGE="false"/' "$LXC_NET_DEFAULTS"
     echo "adaptation-oneplus-fajita: disabled the unused lxc bridge wait"
 fi
 
-LXC_DIR=/var/lib/lxc/android
+# Both overrides below are derived from the vendor files the container will
+# see, every boot, unconditionally. An earlier version regenerated only when
+# the vendor file was newer than the override (-nt). Android builds stamp
+# vendor files with a fixed mtime (2008-12-31 on LineageOS 20), so after the
+# vendor partition changed underneath -- a different slot, a different
+# Android -- the container kept getting OxygenOS 9's init.qcom.rc bound over
+# LineageOS 20's. Two seds on two small files cost nothing; a stale copy
+# cost a day. The bind entries are appended once; the FILES are rewritten,
+# through a temp file, because the override is a live bind source.
+LXC_DIR="${AOF_LXC_DIR:-/var/lib/lxc/android}"
 VENDOR_PROP="$LXC_DIR/rootfs/vendor/build.prop"
 OVERRIDE="$LXC_DIR/vendor-build.prop"
 ENTRY="lxc.mount.entry = $OVERRIDE vendor/build.prop none bind,ro 0 0"
 
 if [ -f "$VENDOR_PROP" ] && [ -f "$LXC_DIR/config" ]; then
-    if [ ! -f "$OVERRIDE" ] || [ "$VENDOR_PROP" -nt "$OVERRIDE" ]; then
-        sed 's/^ro\.build\.shutdown_timeout=0$/ro.build.shutdown_timeout=6/' \
-            "$VENDOR_PROP" > "$OVERRIDE"
-        echo "adaptation-oneplus-fajita: wrote $OVERRIDE"
-    fi
+    sed 's/^ro\.build\.shutdown_timeout=0$/ro.build.shutdown_timeout=6/' \
+        "$VENDOR_PROP" > "$OVERRIDE.tmp" && mv "$OVERRIDE.tmp" "$OVERRIDE"
+    echo "adaptation-oneplus-fajita: wrote $OVERRIDE"
     if ! grep -qF "vendor-build.prop" "$LXC_DIR/config"; then
         printf '%s\n' "$ENTRY" >> "$LXC_DIR/config"
         echo "adaptation-oneplus-fajita: bound patched build.prop into the container"
@@ -106,11 +113,10 @@ RC_OVERRIDE="$LXC_DIR/init.qcom.rc"
 RC_ENTRY="lxc.mount.entry = $RC_OVERRIDE vendor/etc/init/hw/init.qcom.rc none bind,ro 0 0"
 
 if [ -f "$QCOM_RC" ] && [ -f "$LXC_DIR/config" ] && grep -q '^service chre ' "$QCOM_RC"; then
-    if [ ! -f "$RC_OVERRIDE" ] || [ "$QCOM_RC" -nt "$RC_OVERRIDE" ] || grep -q '^    shutdown critical$' <(sed -n '/^service chre /,/^$/p' "$RC_OVERRIDE"); then
-        # Within the chre block only.
-        sed '/^service chre /,/^$/ s/^    shutdown critical$/    disabled/' "$QCOM_RC" > "$RC_OVERRIDE"
-        echo "adaptation-oneplus-fajita: wrote $RC_OVERRIDE (chre disabled)"
-    fi
+    # Within the chre block only.
+    sed '/^service chre /,/^$/ s/^    shutdown critical$/    disabled/' \
+        "$QCOM_RC" > "$RC_OVERRIDE.tmp" && mv "$RC_OVERRIDE.tmp" "$RC_OVERRIDE"
+    echo "adaptation-oneplus-fajita: wrote $RC_OVERRIDE (chre disabled)"
     if ! grep -qF "init.qcom.rc" "$LXC_DIR/config"; then
         printf '%s\n' "$RC_ENTRY" >> "$LXC_DIR/config"
         echo "adaptation-oneplus-fajita: bound patched init.qcom.rc into the container"

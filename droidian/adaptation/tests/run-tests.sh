@@ -250,6 +250,43 @@ ARU_DIR="$ru_dir" "$RU" > /tmp/ru-none.$$ 2>&1
     || { echo "  FAIL  missing knob is a no-op, not a failure"; fail=$((fail+1)); }
 rm -rf "$ru_dir" /tmp/ru-out.$$ /tmp/ru-none.$$
 
+# ---------------------------------------------------------------- Task 1 (los20-userland)
+# The vendor overrides must track the vendor's CONTENT. Android builds stamp
+# vendor files with a fixed mtime (2008-12-31 on LineageOS 20), so an mtime
+# guard never refreshes an override once one exists: measured as OxygenOS 9's
+# init.qcom.rc bound over LineageOS 20's inside the container.
+AOF_APPLY="$ADAPT/adaptation-oneplus-fajita/usr/lib/adaptation-oneplus-fajita/apply"
+aof=$(mktemp -d)
+mkdir -p "$aof/rootfs/vendor/etc/init/hw"
+printf 'ro.build.shutdown_timeout=0\nro.vendor.build.fingerprint=old\n' > "$aof/rootfs/vendor/build.prop"
+printf 'service chre /vendor/bin/chre\n    class late_start\n    shutdown critical\n\nservice other /vendor/bin/other\n    shutdown critical\n' > "$aof/rootfs/vendor/etc/init/hw/init.qcom.rc"
+: > "$aof/config"
+printf 'USE_LXC_BRIDGE="false"\n' > "$aof/lxc-net"
+touch -d 2008-12-31 "$aof/rootfs/vendor/build.prop" "$aof/rootfs/vendor/etc/init/hw/init.qcom.rc"
+
+AOF_LXC_DIR="$aof" AOF_LXC_NET_DEFAULTS="$aof/lxc-net" "$AOF_APPLY" > /tmp/aof-1.$$ 2>&1
+expect_contains "shutdown_timeout is patched"           "$aof/vendor-build.prop" 'ro.build.shutdown_timeout=6'
+expect_contains "chre is disabled"                      "$aof/init.qcom.rc" '    disabled'
+n=$(grep -c '^    shutdown critical$' "$aof/init.qcom.rc")
+[ "$n" = 1 ] && { echo "  PASS  other services keep shutdown critical"; pass=$((pass+1));} \
+    || { echo "  FAIL  other services keep shutdown critical: $n left"; fail=$((fail+1)); }
+expect_contains "build.prop bind is registered"         "$aof/config" 'vendor-build.prop vendor/build.prop'
+expect_contains "init.qcom.rc bind is registered"       "$aof/config" 'init.qcom.rc vendor/etc/init/hw/init.qcom.rc'
+
+# The vendor changes underneath (a new slot, a new Android), with the SAME
+# fixed mtime. The override must follow.
+printf 'ro.vendor.build.fingerprint=new\n' > "$aof/rootfs/vendor/build.prop"
+printf 'service chre /vendor/bin/chre\n    shutdown critical\n\n' > "$aof/rootfs/vendor/etc/init/hw/init.qcom.rc"
+touch -d 2008-12-31 "$aof/rootfs/vendor/build.prop" "$aof/rootfs/vendor/etc/init/hw/init.qcom.rc"
+AOF_LXC_DIR="$aof" AOF_LXC_NET_DEFAULTS="$aof/lxc-net" "$AOF_APPLY" > /tmp/aof-2.$$ 2>&1
+expect_contains "override follows a changed vendor build.prop" "$aof/vendor-build.prop" 'fingerprint=new'
+expect_absent   "old vendor content is gone"                    "$aof/vendor-build.prop" 'fingerprint=old'
+expect_absent   "override follows a changed init.qcom.rc"       "$aof/init.qcom.rc" '/vendor/bin/other'
+n=$(grep -c vendor-build.prop "$aof/config")
+[ "$n" = 1 ] && { echo "  PASS  config bind lines are not duplicated"; pass=$((pass+1));} \
+    || { echo "  FAIL  config bind lines are not duplicated: $n"; fail=$((fail+1)); }
+rm -rf "$aof" /tmp/aof-1.$$ /tmp/aof-2.$$
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
