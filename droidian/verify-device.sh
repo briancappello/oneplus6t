@@ -90,6 +90,21 @@ echo "chre=$(getprop init.svc.chre 2>/dev/null)"
 # knob only exists on the patched kernel.
 echo "fastrpcto=$(cat /sys/module/adsprpc/parameters/kernel_invoke_timeout_ms 2>/dev/null)"
 echo "timewarp=$(jrn | grep -c "Time jumped backwards")"
+# Phase 4 (api33 userland): the container must be the api33 GSI, running,
+# against the LineageOS 20 vendor, with SELinux left permissive by Android
+# init and no vendor service crash-looping. getprop on the host reads the
+# container property area (/dev/__properties__ is shared).
+echo "container=$(systemctl is-active lxc@android.service 2>/dev/null)"
+echo "sdk=$(getprop ro.build.version.sdk 2>/dev/null)"
+echo "vsdk=$(getprop ro.vendor.build.version.sdk 2>/dev/null)"
+echo "vndk=$(getprop ro.vndk.version 2>/dev/null)"
+echo "oldapi=$(dpkg -l 2>/dev/null | grep -cE "^ii  (android-system-gsi-28|droidian-quirks-api28|adaptation-hybris-api28|pulseaudio-modules-droid-jb2q)")"
+echo "hwsm=$(getprop init.svc.hwservicemanager 2>/dev/null)"
+echo "enforce=$(cat /sys/fs/selinux/enforce 2>/dev/null)"
+# A service that failed once shows as stopped and is fine (LineageOS-only
+# vendor services without a LineageOS system). One in a restart loop is
+# not; the roadmap says list them and mask any that loop.
+echo "looping=$(getprop 2>/dev/null | grep -c "^\[init\.svc\..*\]: \[restarting\]")"
 # NOT asserted: that a given node appears in our ruleset. Which nodes need our
 # help legitimately varies -- the kgsl driver creates /dev/kgsl-3d0 and /dev/ion
 # already at their ueventd.rc values on some boots, and skipping an
@@ -131,5 +146,13 @@ ck "droidian data is on linuxroot" '[ "$(val datapart)" = linuxroot ]'
 ck "data fs fills linuxroot"       '[ "$(val datafill)" -ge 95 ] 2>/dev/null'
 ck "userdata is left to Android"   '[ "$(val udmounts)" = 0 ]'
 ck "rootfs is grown past 8G"       '[ "$(val rootsize)" -ge 90 ] 2>/dev/null'
+ck "container is running"          '[ "$(val container)" = active ]'
+ck "container is the api33 GSI"    '[ "$(val sdk)" = 33 ]'
+ck "vendor is Android 13 (api33)"  '[ "$(val vsdk)" = 33 ]'
+ck "VNDK 33 on both sides"         '[ "$(val vndk)" = 33 ]'
+ck "no api28 package remains"      '[ "$(val oldapi)" = 0 ]'
+ck "hwservicemanager is running"   '[ "$(val hwsm)" = running ]'
+ck "selinux stays permissive"      '[ "$(val enforce)" = 0 ]'
+ck "no vendor service crash-loops" '[ "$(val looping)" = 0 ]'
 [ $fail -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit $fail
